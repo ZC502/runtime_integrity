@@ -1,0 +1,23 @@
+{
+  "name": "ROS 2 Humble - Kinematic Guard Dev",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+  "features": {
+    "ghcr.io/devcontainers/features/desktop-lite:1": {},
+    "ghcr.io/vscodetools/features/ros:1": {
+      "version": "humble",
+      "rosdep": true
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-iot.vscode-ros",
+        "ms-python.python",
+        "redhat.vscode-yaml"
+      ]
+    }
+  },
+  "forwardPorts": [8080, 9090],
+  "postCreateCommand": "bash -lc 'sudo rosdep init 2>/dev/null || true; rosdep update; rosdep install --from-paths . --ignore-src -r -y; source /opt/ros/humble/setup.bash; colcon build --symlink-install; echo \"source /opt/ros/humble/setup.bash\" >> ~/.bashrc; echo \"source $(pwd)/install/setup.bash\" >> ~/.bashrc'",
+  "remoteUser": "vscode"
+}
