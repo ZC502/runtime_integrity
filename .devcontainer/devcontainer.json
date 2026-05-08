@@ -18,6 +18,6 @@
     }
   },
   "forwardPorts": [8080, 9090],
-  "postCreateCommand": "bash -lc 'sudo rosdep init 2>/dev/null || true; rosdep update; rosdep install --from-paths . --ignore-src -r -y; source /opt/ros/humble/setup.bash; colcon build --symlink-install; echo \"source /opt/ros/humble/setup.bash\" >> ~/.bashrc; echo \"source $(pwd)/install/setup.bash\" >> ~/.bashrc'",
+  "postCreateCommand": "bash -lc 'sudo rosdep init 2>/dev/null || true; rosdep update; rosdep install --from-paths src --ignore-src -r -y; source /opt/ros/humble/setup.bash; colcon build --symlink-install; echo \"source /opt/ros/humble/setup.bash\" >> ~/.bashrc; echo \"source $(pwd)/install/setup.bash\" >> ~/.bashrc'",
   "remoteUser": "vscode"
 }
