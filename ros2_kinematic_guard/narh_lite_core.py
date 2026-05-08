@@ -151,6 +151,11 @@ class NarhLiteConfig:
     w_cmd_jerk: float = 0.7
     w_cmd_odom: float = 1.4
 
+    # Emergency brake limits
+    emergency_linear_brake_accel: float = 1.8    # m/s^2
+    emergency_angular_brake_accel: float = 3.5   # rad/s^2
+    brake_zero_epsilon_vx: float = 0.01          # m/s
+    brake_zero_epsilon_wz: float = 0.02          # rad/s
 
 @dataclass
 class NarhLiteResult:
@@ -685,21 +690,55 @@ class NarhLiteCore:
 
     def _ramp_to_zero(self, dt: float) -> KinematicCommand:
         target = KinematicCommand(0.0, 0.0)
-        return self._accel_limited_command(target, dt)
+        return self._limited_command(
+            target=target,
+            dt=dt,
+            linear_accel_limit=max(
+                self.cfg.max_linear_accel,
+                self.cfg.emergency_linear_brake_accel
+            ),
+            angular_accel_limit=max(
+                self.cfg.max_angular_accel,
+                self.cfg.emergency_angular_brake_accel
+            ),
+        )
+
 
     def _accel_limited_command(
         self,
         target: KinematicCommand,
         dt: float,
     ) -> KinematicCommand:
+        return self._limited_command(
+            target=target,
+            dt=dt,
+            linear_accel_limit=self.cfg.max_linear_accel,
+            angular_accel_limit=self.cfg.max_angular_accel,
+        )
 
+
+    def _limited_command(
+        self,
+        target: KinematicCommand,
+        dt: float,
+        linear_accel_limit: float,
+        angular_accel_limit: float,
+    ) -> KinematicCommand:
+
+        dt = max(dt, self.cfg.min_dt)
         last = self._last_safe_cmd
 
-        max_dv = self.cfg.max_linear_accel * dt
-        max_dw = self.cfg.max_angular_accel * dt
+        max_dv = abs(linear_accel_limit) * dt
+        max_dw = abs(angular_accel_limit) * dt
 
         vx = last.vx + clamp(target.vx - last.vx, -max_dv, max_dv)
         wz = last.wz + clamp(target.wz - last.wz, -max_dw, max_dw)
+
+        if abs(vx) < self.cfg.brake_zero_epsilon_vx and target.vx == 0.0:
+            vx = 0.0
+
+        if abs(wz) < self.cfg.brake_zero_epsilon_wz and target.wz == 0.0:
+           wz = 0.0
 
         return KinematicCommand(
             vx=vx,
