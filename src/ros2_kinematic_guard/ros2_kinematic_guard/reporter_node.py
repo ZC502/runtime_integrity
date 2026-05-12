@@ -526,7 +526,7 @@ class CommandIntegrityReporterNode(Node):
         self.diag_pub.publish(diag)
 
         vda_msg = String()
-        vda_msg.data = json.dumps(integrity, indent=2)
+        vda_msg.data = json.dumps(json_safe(integrity), indent=2)
         self.vda_pub.publish(vda_msg)
 
         summary = String()
