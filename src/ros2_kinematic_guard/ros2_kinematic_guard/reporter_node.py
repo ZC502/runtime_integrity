@@ -123,6 +123,38 @@ def json_safe(obj):
 
     return str(obj)
 
+DIAG_OK = 0
+DIAG_WARN = 1
+DIAG_ERROR = 2
+DIAG_STALE = 3
+
+
+def diag_level_msg_value(level_int: int):
+    """
+    diagnostic_msgs/DiagnosticStatus.level is 'byte' in the msg definition.
+    In some ROS 2 Python environments this expects bytes, not int.
+    """
+    level_int = int(level_int)
+    level_int = max(0, min(3, level_int))
+
+    try:
+        return bytes([level_int])
+    except Exception:
+        return level_int
+
+
+def set_diagnostic_level(status: DiagnosticStatus, level_int: int) -> None:
+    """
+    Set DiagnosticStatus.level robustly across ROS 2 Python byte/int behavior.
+    """
+    level_int = int(level_int)
+    level_int = max(0, min(3, level_int))
+
+    try:
+        status.level = bytes([level_int])
+    except Exception:
+        status.level = level_int
+
 # ============================================================
 # Reporter Node
 # ============================================================
@@ -306,15 +338,15 @@ class CommandIntegrityReporterNode(Node):
 
     def _diagnostic_level(self, latency_class: str, execution_state: str) -> int:
         if self._status_is_stale():
-            return diag_level_int(DiagnosticStatus.STALE)
+            return DIAG_STALE
 
         if latency_class == "CRITICAL" or execution_state in {"RED_BRAKE", "RESYNCING"}:
-            return diag_level_int(DiagnosticStatus.ERROR)
+            return DIAG_ERROR
 
         if latency_class == "DEGRADED" or execution_state == "YELLOW_SLOWDOWN":
-            return diag_level_int(DiagnosticStatus.WARN)
+            return DIAG_WARN
 
-            return diag_level_int(DiagnosticStatus.OK)
+        return DIAG_OK
 
     def _recommended_vehicle_response(self, execution_state: str, latency_class: str) -> str:
         if self._status_is_stale():
@@ -445,7 +477,7 @@ class CommandIntegrityReporterNode(Node):
 
                 "cleanWindowCount": clean_window_count,
 
-                "rosDiagnosticLevel": diag_level_int(self._diagnostic_level(latency_class, execution_state)),
+                "rosDiagnosticLevel": int(self._diagnostic_level(latency_class, execution_state)),
                 "source": "ros2_kinematic_guard"
             },
 
@@ -463,22 +495,18 @@ class CommandIntegrityReporterNode(Node):
 
         latency_class = command_integrity["latencyClass"]
         execution_state = command_integrity["executionState"]
-        level = diag_level_int(self._diagnostic_level(latency_class, execution_state))
+        level = int(self._diagnostic_level(latency_class, execution_state))
 
         status = DiagnosticStatus()
         status.name = "ros2_kinematic_guard/command_execution_integrity"
         status.hardware_id = self.vehicle_id
-        status.level = level
+        set_diagnostic_level(status, level)
 
-        OK = diag_level_int(DiagnosticStatus.OK)
-        WARN = diag_level_int(DiagnosticStatus.WARN)
-        ERROR = diag_level_int(DiagnosticStatus.ERROR)
-
-        if level == OK:
+        if level == DIAG_OK:
             status.message = "Command execution integrity normal"
-        elif level == WARN:
+        elif level == DIAG_WARN:
             status.message = "Command execution integrity degraded"
-        elif level == ERROR:
+        elif level == DIAG_ERROR:
             status.message = "Command execution integrity critical"
         else:
             status.message = "Command execution integrity status stale"
@@ -556,8 +584,8 @@ def main(args=None) -> None:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
-
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == "__main__":
     main()
