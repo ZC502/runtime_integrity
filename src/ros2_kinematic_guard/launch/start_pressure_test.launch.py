@@ -226,3 +226,31 @@ def generate_launch_description():
             ],
         ),
     ])
+
+        Node(
+            package="ros2_kinematic_guard",
+            executable="command_integrity_reporter_node",
+            name="command_integrity_reporter",
+            output="screen",
+            parameters=[{
+                "guard_status_topic": "/kinematic_guard/status",
+                "guard_residual_topic": "/kinematic_guard/residual",
+
+                "diagnostics_topic": "/diagnostics",
+                "vda_state_topic": "/command_integrity/vda5050_state",
+                "summary_topic": "/command_integrity/summary",
+
+                "vehicle_id": "demo_amr_001",
+                "manufacturer": "ros2_kinematic_guard_demo",
+                "serial_number": "demo",
+
+                "yellow_threshold": yellow_threshold,
+                "red_threshold": red_threshold,
+
+                "cmd_ttl": 0.25,
+                "nominal_dt": 0.05,
+                "status_timeout": 1.0,
+                "publish_rate_hz": 5.0,
+            }], 
+        ),
+       
