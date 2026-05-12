@@ -1,23 +1,4 @@
 #!/usr/bin/env python3
-"""
-start_pressure_test.launch.py
-
-One-click Bad-WiFi pressure test for ros2_kinematic_guard.
-
-Pipeline
---------
-jitter_injector_node
-    /cmd_vel_raw -> /cmd_vel_jittered
-
-kinematic_guard_node
-    /cmd_vel_jittered + /odom -> /kinematic_guard/safe_cmd_vel
-
-synthetic_odom_provider
-    /kinematic_guard/safe_cmd_vel -> /odom
-
-static_transform_publisher
-    map -> odom
-"""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -27,9 +8,6 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    # ------------------------------------------------------------
-    # Launch arguments
-    # ------------------------------------------------------------
     profile = LaunchConfiguration("profile")
     use_demo_cmd = LaunchConfiguration("use_demo_cmd")
     slip_probability = LaunchConfiguration("slip_probability")
@@ -43,9 +21,6 @@ def generate_launch_description():
     red_threshold = LaunchConfiguration("red_threshold")
 
     return LaunchDescription([
-        # --------------------------------------------------------
-        # Arguments
-        # --------------------------------------------------------
         DeclareLaunchArgument(
             "profile",
             default_value="bad_wifi",
@@ -92,9 +67,7 @@ def generate_launch_description():
             description="R_NAR threshold for RED_BRAKE.",
         ),
 
-        # --------------------------------------------------------
         # 1. Bad-WiFi jitter injector
-        # --------------------------------------------------------
         Node(
             package="ros2_kinematic_guard",
             executable="jitter_injector_node",
@@ -104,10 +77,7 @@ def generate_launch_description():
                 "profile": profile,
                 "use_demo_cmd": use_demo_cmd,
 
-                # Clean command generated here:
                 "demo_raw_topic": "/cmd_vel_raw",
-
-                # Injector subscribes to clean command and publishes poisoned command:
                 "input_topic": "/cmd_vel_raw",
                 "output_topic": "/cmd_vel_jittered",
 
@@ -119,16 +89,13 @@ def generate_launch_description():
             }],
         ),
 
-        # --------------------------------------------------------
         # 2. NARH Guard main gate
-        # --------------------------------------------------------
         Node(
             package="ros2_kinematic_guard",
             executable="kinematic_guard_node",
             name="kinematic_guard",
             output="screen",
             parameters=[{
-                # Default remapping-style topics:
                 "cmd_input_topic": "/cmd_vel_jittered",
                 "cmd_output_topic": "/kinematic_guard/safe_cmd_vel",
                 "odom_topic": "/odom",
@@ -142,29 +109,24 @@ def generate_launch_description():
                 "control_rate_hz": control_rate_hz,
                 "status_rate_hz": 5.0,
 
-                # Standard thresholds:
                 "yellow_threshold": yellow_threshold,
                 "red_threshold": red_threshold,
 
-                # Timing:
                 "default_dt": 0.05,
                 "min_dt": 0.001,
                 "max_dt": 0.50,
                 "cmd_ttl": 0.25,
                 "phase_tolerance": 0.08,
 
-                # Small mobile robot defaults:
                 "max_linear_accel": 0.8,
                 "max_angular_accel": 1.5,
                 "max_linear_jerk": 3.0,
                 "max_angular_jerk": 6.0,
 
-                # Residual tolerances:
                 "position_tolerance": 0.03,
                 "yaw_tolerance": 0.08,
                 "lateral_tolerance": 0.03,
 
-                # Killer feature:
                 "enable_brake_and_resync": True,
                 "flush_buffers_on_red": True,
                 "publish_zero_until_ready": True,
@@ -173,15 +135,12 @@ def generate_launch_description():
                 "slowdown_scale": 0.45,
                 "resync_required_good_frames": 5,
 
-                # Twist has no header, so use receive time:
                 "use_receive_time_for_twist": True,
                 "replace_zero_header_stamp": True,
             }],
         ),
 
-        # --------------------------------------------------------
         # 3. Synthetic odometry provider
-        # --------------------------------------------------------
         Node(
             package="ros2_kinematic_guard",
             executable="synthetic_odom_provider",
@@ -203,30 +162,13 @@ def generate_launch_description():
                 "max_linear_accel": 1.0,
                 "max_angular_accel": 2.0,
 
-                # Slight physical disturbance:
                 "slip_probability": slip_probability,
                 "linear_noise_std": 0.005,
                 "angular_noise_std": 0.01,
             }],
         ),
 
-        # --------------------------------------------------------
-        # 4. Optional static transform map -> odom
-        # --------------------------------------------------------
-        Node(
-            condition=IfCondition(use_static_tf),
-            package="tf2_ros",
-            executable="static_transform_publisher",
-            name="static_map_to_odom",
-            output="screen",
-            arguments=[
-                "0", "0", "0",
-                "0", "0", "0",
-                "map", "odom",
-            ],
-        ),
-    ])
-
+        # 4. Command integrity reporter
         Node(
             package="ros2_kinematic_guard",
             executable="command_integrity_reporter_node",
@@ -251,6 +193,20 @@ def generate_launch_description():
                 "nominal_dt": 0.05,
                 "status_timeout": 1.0,
                 "publish_rate_hz": 5.0,
-            }], 
+            }],
         ),
-       
+
+        # 5. Optional static transform map -> odom
+        Node(
+            condition=IfCondition(use_static_tf),
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            name="static_map_to_odom",
+            output="screen",
+            arguments=[
+                "0", "0", "0",
+                "0", "0", "0",
+                "map", "odom",
+            ],
+        ),
+    ])
