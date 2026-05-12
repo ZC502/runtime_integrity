@@ -84,6 +84,45 @@ def make_kv(key: str, value: Any) -> KeyValue:
     return kv
 
 
+def diag_level_int(level) -> int:
+    """
+    Convert diagnostic_msgs DiagnosticStatus constants to plain int.
+
+    Some ROS 2 Python generated constants may behave like bytes in certain
+    environments. JSON serialization requires plain int/string values.
+    """
+    if isinstance(level, bytes):
+        return int.from_bytes(level, byteorder="little", signed=False)
+
+    try:
+        return int(level)
+    except Exception:
+        return 3  # STALE fallback
+
+
+def json_safe(obj):
+    """
+    Recursively convert payload into JSON-serializable primitives.
+    """
+    if isinstance(obj, bytes):
+        if len(obj) == 1:
+            return int.from_bytes(obj, byteorder="little", signed=False)
+        try:
+            return obj.decode("utf-8")
+        except Exception:
+            return list(obj)
+
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+
+    if isinstance(obj, dict):
+        return {str(k): json_safe(v) for k, v in obj.items()}
+
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+
+    return str(obj)
+
 # ============================================================
 # Reporter Node
 # ============================================================
@@ -267,15 +306,15 @@ class CommandIntegrityReporterNode(Node):
 
     def _diagnostic_level(self, latency_class: str, execution_state: str) -> int:
         if self._status_is_stale():
-            return DiagnosticStatus.STALE
+            return diag_level_int(DiagnosticStatus.STALE)
 
         if latency_class == "CRITICAL" or execution_state in {"RED_BRAKE", "RESYNCING"}:
-            return DiagnosticStatus.ERROR
+            return diag_level_int(DiagnosticStatus.ERROR)
 
         if latency_class == "DEGRADED" or execution_state == "YELLOW_SLOWDOWN":
-            return DiagnosticStatus.WARN
+            return diag_level_int(DiagnosticStatus.WARN)
 
-        return DiagnosticStatus.OK
+            return diag_level_int(DiagnosticStatus.OK)
 
     def _recommended_vehicle_response(self, execution_state: str, latency_class: str) -> str:
         if self._status_is_stale():
@@ -406,7 +445,7 @@ class CommandIntegrityReporterNode(Node):
 
                 "cleanWindowCount": clean_window_count,
 
-                "rosDiagnosticLevel": self._diagnostic_level(latency_class, execution_state),
+                "rosDiagnosticLevel": diag_level_int(self._diagnostic_level(latency_class, execution_state)),
                 "source": "ros2_kinematic_guard"
             },
 
@@ -424,22 +463,26 @@ class CommandIntegrityReporterNode(Node):
 
         latency_class = command_integrity["latencyClass"]
         execution_state = command_integrity["executionState"]
-        level = self._diagnostic_level(latency_class, execution_state)
+        level = diag_level_int(self._diagnostic_level(latency_class, execution_state))
 
         status = DiagnosticStatus()
         status.name = "ros2_kinematic_guard/command_execution_integrity"
         status.hardware_id = self.vehicle_id
         status.level = level
 
-        if level == DiagnosticStatus.OK:
+        OK = diag_level_int(DiagnosticStatus.OK)
+        WARN = diag_level_int(DiagnosticStatus.WARN)
+        ERROR = diag_level_int(DiagnosticStatus.ERROR)
+
+        if level == OK:
             status.message = "Command execution integrity normal"
-        elif level == DiagnosticStatus.WARN:
+        elif level == WARN:
             status.message = "Command execution integrity degraded"
-        elif level == DiagnosticStatus.ERROR:
+        elif level == ERROR:
             status.message = "Command execution integrity critical"
         else:
             status.message = "Command execution integrity status stale"
-
+        
         # Main fields
         status.values.append(make_kv("vehicle_id", self.vehicle_id))
         status.values.append(make_kv("residual", command_integrity["residual"]))
