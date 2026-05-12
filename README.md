@@ -1,252 +1,601 @@
-# ROS 2 Kinematic Guard
-**NARH-based（(Non-Associative Residual Hypothesis) Kinematic Guard for ROS 2**
->ROS 2 transmits messages. NARH Guard ensures those messages are still executable.
-It does not fix the network. It prevents bad network timing from becoming dangerous robot motion.
+# ROS 2 Kinematic Guard (NARH)
 
-`ros2_kinematic_guard` is a lightweight safety middleware for ROS 2 mobile robots.
-It detects stale, bursty, delayed, replayed, or physically inconsistent velocity commands, then outputs a protected `safe_cmd_vel`.
+## Command-Execution-Integrity Telemetry for ROS 2 and VDA5050-style Mixed Fleets
 
-The killer feature is:
-```
-BRAKE_AND_RESYNC
-```
-When command timing collapses, the guard does not merely warn. It can actively cut motion, flush poisoned command windows, wait for a fresh command/odom window, and then recover.
+> ROS 2 moves the robot.  
+> VDA 5050 coordinates the fleet.  
+> NARH Guard reports whether the recent command window is still executable.
+
+`ros2_kinematic_guard` is a lightweight ROS 2 middleware project for detecting degraded command execution under bad Wi-Fi / 5G timing.
+
+It has two roles:
+
+1. **Local protection**  
+   It can stop forwarding poisoned `/cmd_vel` windows and enter `BRAKE_AND_RESYNC`.
+
+2. **Fleet observability**  
+   It translates the same NARH residual into:
+   - ROS-native `/diagnostics`
+   - VDA5050-style `commandExecutionIntegrity` telemetry
+   - compact `/command_integrity/summary`
+
+This project is **not** a VDA 5050 implementation.  
+It is **not** a certified safety controller.  
+It does **not** replace `ros2_control`, hardware safety, safety PLCs, emergency stops, or vehicle-level functional safety requirements.
+
+It provides a missing signal:
+
+> **Is the recent command/feedback window still trustworthy?**
 
 ---
 
-## 1. ⚠️ The Pain: Control Semantic Collapse
+## Why this exists
 
-In real Wi-Fi / 5G / congested robot networks, the problem is not only packet loss.
+In real mobile-robot deployments, especially over Wi-Fi / private LTE / 5G, the problem is not only packet loss.
 
-The deeper issue is **control semantic collapse**:
-```
-The message arrives.
-But it is no longer physically executable.
+A command may still arrive.
+
+It may still be syntactically valid.
+
+But it may no longer be executable relative to the robot’s current physical state.
+
+Typical failure modes include:
+
+- stale commands arriving late
+- burst delivery after buffering
+- replay-like behavior after reconnection
+- near-zero `dt` between command windows
+- command/odometry phase mismatch
+- command acceleration or jerk exceeding feasible limits
+
+Traditional heartbeat or timeout checks answer:
+
+```text
+Did a message arrive recently?
 ```
 
-Typical failure modes:
+NARH Guard asks a stricter question:
 
-### 1.1 Stale command replay
-
-A robot receives a command that was valid hundreds of milliseconds ago, but dangerous now.
-
-Example:
-```
-old forward command arrives after a stop command
-```
-The base may execute a “ghost command” from the past.
-
-### 1.2 Burst release
-
-Under bad wireless timing, commands may accumulate in buffers and then arrive in a burst.
-
-Your controller sees:
-```
-cmd_1, cmd_2, cmd_3, cmd_4...
-```
-all within a tiny time window.
-
-This can create abnormal acceleration or jerk demand.
-
-### 1.3 Time-flow disorder
-
-`/cmd_vel` is commonly published as `geometry_msgs/Twist`, which has no header timestamp.
-Many lower-level controllers therefore execute whatever command arrives, without knowing whether that command is fresh, stale, duplicated, or replayed.
-
-### Demo Proof: The Chaos
-The built-in Bad-WiFi injector produces exactly these toxic timing patterns:
-```
-DUPLICATE_IN_BURST
-BURST_BUFFER_OVERFLOW_DROP_OLDEST
-BURST_RELEASE_count=8
-DELAY_0.453s
-DROP
-REPLAY_STALE
-```
-```
-TE_IN_BURST | vx=0.250, wz=0.000
-[jitter_injector_node-1] [INFO] [1778242894.834988181] [jitter_injector]: [JITTER] DUPLICATE_IN_BURST | vx=0.250, wz=0.000
-[jitter_injector_node-1] [INFO] [1778242894.884439806] [jitter_injector]: [JITTER] BURST_BUFFER_OVERFLOW_DROP_OLDEST | vx=0.250, wz=0.000
-[jitter_injector_node-1] [INFO] [1778242894.885795719] [jitter_injector]: [JITTER] BURST_BUFFER_OVERFLOW_DROP_OLDEST | vx=0.250, wz=0.000
-[jitter_injector_node-1] [INFO] [1778242894.941915902] [jitter_injector]: [JITTER] BURST_BUFFER_OVERFLOW_DROP_OLDEST | vx=0.250, wz=0.000
-[jitter_injector_node-1] [INFO] [1778242894.971344953] [jitter_injector]: [JITTER] BURST_BUFFER_OVERFLOW_DROP_OLDEST | vx=0.250, wz=0.000
-[jitter_injector_node-1] [INFO] [1778242894.990200348] [jitter_injector]: [JITTER] BURST_BUFFER_OVERFLOW_DROP_OLDEST | vx=0.250, wz=0.000
-[jitter_injector_node-1] [INFO] [1778242895.000384268] [jitter_injector]: [JITTER]
-```
-The test log also shows synthetic physical disturbance events such as SLIP_START / SLIP_END, meaning the demo includes both network timing corruption and feedback disturbance. 
-
-## 2. ✅ The Cure: NARH-lite Guard & Quick Start
-NARH Guard monitors the relationship between:
-```
-previous command
-current command
-previous odometry
-current odometry
-```
-It computes a lightweight residual:
-```
-R_NAR
-```
-If the command/feedback window is still executable, the guard passes or gently smooths the command.
-If the residual crosses a danger threshold, the guard enters:
-```
-RED_BRAKE
-BRAKE_AND_RESYNC
-RESYNCING
-```
-```
-data: '{"timestamp": 1778242938.816956, "status": "RESYNCING", "action": "BRAKE_AND_RESYNC", "r_nar": 0.0035744605798055853, "safe_cmd"...'
----
-data: '{"timestamp": 1778242939.020653, "status": "RESYNCING", "action": "BRAKE_AND_RESYNC", "r_nar": 0.0019947126815960275, "safe_cmd"...'
----
-data: '{"timestamp": 1778242939.2178075, "status": "RESYNCING", "action": "BRAKE_AND_RESYNC", "r_nar": 5.477226981939539, "safe_cmd": {...'
----
-data: '{"timestamp": 1778242939.4169483, "status": "RESYNCING", "action": "BRAKE_AND_RESYNC", "r_nar": 5.749790876935357, "safe_cmd": {...'
----
-data: '{"timestamp": 1778242939.6169808, "status": "RESYNCING", "action": "BRAKE_AND_RESYNC", "r_nar": 6094.8047968893925, "safe_cmd": ...'
----
-data: '{"timestamp": 1778242939.8169532, "status": "RESYNCING", "action": "BRAKE_AND_RESYNC", "r_nar": 0.08677715954568423, "safe_cmd":...'
-```
-In the pressure test, `/kinematic_guard/status` shows `RESYNCING` and `BRAKE_AND_RESYNC` repeatedly during toxic command windows, with `R_NAR` spikes such as `5.47`, `5.74`, `13.83`, and even `6094.80`in an extreme timing-collapse window. 
-
-Example status:
-```
-{
-  "status": "RESYNCING",
-  "action": "BRAKE_AND_RESYNC",
-  "r_nar": 5.749,
-  "safe_cmd": {
-    "vx": 0.0,
-    "wz": 0.0
-  }
-}
-```
-Meaning:
-```
-The command stream is no longer trusted.
-Motion is cut.
-The guard waits for a fresh command/odom window.
+```text
+Is this command still kinematically executable under the current odometry stream?
 ```
 
 ---
 
-# Quick Start: 30 Seconds to Chaos
-**Build**
+## Architecture
+
+```text
+Bad Wi-Fi / 5G timing collapse
+        │
+        ▼
+/cmd_vel_jittered
+        │
+        ▼
+┌──────────────────────────────┐
+│  kinematic_guard_node.py     │
+│  NARH-lite residual R_NAR    │
+│  BRAKE_AND_RESYNC            │
+└───────────────┬──────────────┘
+                │
+                ├── /kinematic_guard/safe_cmd_vel
+                │       local protected command output
+                │
+                ├── /kinematic_guard/status
+                │       guard state: GREEN / RED_BRAKE / RESYNCING
+                │
+                ▼
+┌──────────────────────────────┐
+│  reporter_node.py            │
+│  Command Integrity Reporter  │
+└───────────────┬──────────────┘
+                │
+                ├── /diagnostics
+                │       diagnostic_msgs/DiagnosticArray
+                │
+                ├── /command_integrity/vda5050_state
+                │       VDA5050-style JSON telemetry
+                │
+                └── /command_integrity/summary
+                        compact fleet-readable status
 ```
+
+---
+
+## Quick Demo
+
+### 1. Build
+
+```bash
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
 source install/setup.bash
 ```
-**Run the pressure test**
-```
-ros2 launch ros2_kinematic_guard start_pressure_test.launch.py
-```
-**More aggressive test**
-```
-ros2 launch ros2_kinematic_guard start_pressure_test.launch.py \
-  profile:=wifi_collapse \
-  slip_probability:=0.02 \
-  red_threshold:=4.0
-```
-**Watch the guard status**
-```
-ros2 topic echo /kinematic_guard/status
-```
-**Watch the residual**
-```
-ros2 topic echo /kinematic_guard/residual
-```
-**Watch the protected command**
-```
-ros2 topic echo /kinematic_guard/safe_cmd_vel
+
+### 2. Run the Bad-Wi-Fi pressure test
+
+```bash
+ros2 launch ros2_kinematic_guard start_pressure_test.launch.py profile:=wifi_collapse
 ```
 
----
+This starts:
 
-**No Robot Required**
+```text
+jitter_injector_node.py
+kinematic_guard_node.py
+synthetic_odom_provider.py
+reporter_node.py
+static_transform_publisher
+```
 
 You do not need:
-```
+
+```text
 real robot
 Gazebo
 Isaac Sim
 Nav2
 hardware motor driver
 ```
-This repo includes a complete closed-loop pressure test:
-```
+
+The repo includes a closed-loop synthetic test:
+
+```text
 jitter_injector_node.py
-    creates toxic /cmd_vel_jittered
+    creates delayed / duplicated / bursty / replayed /cmd_vel
 
 kinematic_guard_node.py
-    computes R_NAR and outputs /kinematic_guard/safe_cmd_vel
+    computes R_NAR and outputs protected safe_cmd_vel
 
 synthetic_odom_provider.py
     acts as a virtual robot body and publishes /odom
+
+reporter_node.py
+    translates NARH Guard state into ROS diagnostics and VDA5050-style telemetry
 ```
-The full loop:
+
+---
+
+## Watch the telemetry
+
+### Compact fleet-readable summary
+
+```bash
+ros2 topic echo /command_integrity/summary
 ```
-/cmd_vel_raw
-  ↓
-jitter_injector_node.py
-  ↓
+
+Example output:
+
+```text
+data: state=RESYNCING latency=CRITICAL R_NAR=5.478 vehicle_response=RESYNC_REQUIRED fleet_action=HOLD_NEW_ORDERS
+---
+data: state=RESYNCING latency=CRITICAL R_NAR=1412.078 vehicle_response=RESYNC_REQUIRED fleet_action=HOLD_NEW_ORDERS
+---
+data: state=RECOVERED latency=NORMAL R_NAR=0.000 vehicle_response=NONE fleet_action=NONE
+---
+```
+
+This means:
+
+```text
+The local guard is still in RESYNCING.
+The command stream is not yet trusted again.
+The vehicle response should remain in RESYNC_REQUIRED.
+The fleet layer should hold new orders.
+```
+
+---
+
+### ROS-native diagnostics
+
+```bash
+ros2 topic echo /diagnostics
+```
+
+Expected fields include:
+
+```text
+name: ros2_kinematic_guard/command_execution_integrity
+level: WARN / ERROR / STALE
+message: Command execution integrity critical
+values:
+  residual
+  latency_class
+  execution_state
+  recommended_vehicle_response
+  suggested_fleet_action
+```
+
+This makes the command-integrity signal visible to standard ROS diagnostic tooling.
+
+---
+
+### VDA5050-style telemetry
+
+```bash
+ros2 topic echo /command_integrity/vda5050_state
+```
+
+Example payload:
+
+```json
+{
+  "vehicleId": "demo_amr_001",
+  "manufacturer": "ros2_kinematic_guard_demo",
+  "serialNumber": "demo",
+  "commandExecutionIntegrity": {
+    "residual": 5.478,
+    "residualType": "kinematic_consistency",
+    "latencyClass": "CRITICAL",
+    "commandAgeMs": 0.0,
+    "jitterMs": 0.0,
+    "burstDetected": true,
+    "staleCommandDetected": false,
+    "replayWindowDetected": false,
+    "executionState": "RESYNCING",
+    "guardAction": "BRAKE_AND_RESYNC",
+    "recommendedVehicleResponse": "RESYNC_REQUIRED",
+    "suggestedFleetAction": "HOLD_NEW_ORDERS",
+    "cleanWindowCount": 0,
+    "source": "ros2_kinematic_guard"
+  }
+}
+```
+
+This is **not an official VDA 5050 field**.
+
+It is a proof-of-concept for a possible vendor-neutral command-execution-integrity telemetry extension.
+
+The goal is to make wireless command degradation visible at the fleet level instead of hiding it inside local controller or driver behavior.
+
+---
+
+## Demo: From Bad Wi-Fi collapse to fleet-level observability
+
+Recent mixed-fleet discussions around VDA 5050 highlight the commercial value of deterministic fleet coordination.
+
+This demo does **not** claim to measure fleet throughput directly.
+
+Instead, it shows the missing observability layer:
+
+```text
+When wireless timing collapses,
+the vehicle can expose a quantitative command-execution-integrity signal
+before the fleet manager assigns new orders,
+intersection crossings,
+or zone-speed policies.
+```
+
+A fleet manager should be able to know:
+
+```text
+This vehicle is still command-consistent.
+This vehicle is degraded.
+This vehicle is in RESYNCING.
+This vehicle should not receive new orders yet.
+```
+
+---
+
+## Node overview
+
+### `jitter_injector_node.py`
+
+Creates toxic command timing patterns:
+
+```text
+DUPLICATE_IN_BURST
+BURST_BUFFER_OVERFLOW_DROP_OLDEST
+BURST_RELEASE_count=16
+DELAY_0.653s
+DROP
+REPLAY_STALE
+```
+
+It publishes:
+
+```text
 /cmd_vel_jittered
-  ↓
-kinematic_guard_node.py
-  ↓
-/kinematic_guard/safe_cmd_vel
-  ↓
-synthetic_odom_provider.py
-  ↓
+/jitter_injector/status
+```
+
+---
+
+### `kinematic_guard_node.py`
+
+Consumes:
+
+```text
+/cmd_vel_jittered
 /odom
-  ↺
-kinematic_guard_node.py
+```
+
+Publishes:
+
+```text
+/kinematic_guard/safe_cmd_vel
+/kinematic_guard/status
+/kinematic_guard/residual
+```
+
+It computes the NARH-lite residual:
+
+```text
+R_NAR
+```
+
+and drives the local finite-state machine:
+
+```text
+GREEN
+YELLOW_SLOWDOWN
+RED_BRAKE
+RESYNCING
+RECOVERED
 ```
 
 ---
 
-**Why this is not just a velocity smoother**
+### `synthetic_odom_provider.py`
 
-| Failure Mode               | Heartbeat / Timeout             | NARH Kinematic Guard                          |
-| -------------------------- | ------------------------------- | --------------------------------------------- |
-| Packet loss                | Can stop motion                 | Can stop motion                               |
-| Stale command              | Often missed                    | Detected by timing + kinematic inconsistency  |
-| Replay command             | Often missed                    | Can trigger `BRAKE_AND_RESYNC`                |
-| Burst command              | Often dangerous                 | Detected as time-flow / acceleration residual |
-| Command-odom contradiction | Usually not checked             | Directly measured                             |
-| Recovery                   | Usually manual or timeout-based | Fresh-window resync gate                      |
+Acts as a virtual robot body.
+
+Consumes:
+
+```text
+/kinematic_guard/safe_cmd_vel
+```
+
+Publishes:
+
+```text
+/odom
+/synthetic_odom/status
+```
+
+It can also inject physical disturbance events such as:
+
+```text
+SLIP_START
+SLIP_END
+```
 
 ---
 
-## 3. Technical Design & FAQ
+### `reporter_node.py`
 
-NARH Guard does not attempt to repair the network.
+Bridges local guard state to ROS and fleet-level telemetry.
 
-It asks a different question:
-```
-Given the last two commands and the last two odometry states,
-is this motion window still executable?
-```
-### 3.1 Kinematic Windowing
+Consumes:
 
-For each window:
+```text
+/kinematic_guard/status
+/kinematic_guard/residual
 ```
+
+Publishes:
+
+```text
+/diagnostics
+/command_integrity/vda5050_state
+/command_integrity/summary
+```
+
+This is the bridge between:
+
+```text
+ROS 2 local command execution
+        ↓
+ROS-native diagnostics
+        ↓
+VDA5050-style fleet observability
+```
+
+---
+
+## Why this is not just a timeout
+
+| Failure Mode | Heartbeat / Timeout | NARH Kinematic Guard |
+|---|---|---|
+| Packet loss | Can detect silence | Can detect silence and brake |
+| Stale command | Often missed | Detected through timing + kinematic inconsistency |
+| Burst command | Often missed | Detected through residual spike |
+| Replay-like command | Often missed | Detected through stale / command-odom conflict |
+| Command/odom contradiction | Usually not checked | Directly measured |
+| Recovery | Timeout-based | Fresh-window resync gate |
+| Fleet reporting | Usually absent | Exposed as ROS diagnostics + VDA5050-style telemetry |
+
+Heartbeat and timeout mechanisms answer:
+
+```text
+Did a message arrive recently?
+```
+
+NARH Guard asks:
+
+```text
+Is the recent command/feedback window still trustworthy?
+```
+
+---
+
+## Relationship to `ros2_control`
+
+This project is complementary to `ros2_control`.
+
+`ros2_control` provides important controller-side mechanisms such as:
+
+```text
+stamped references
+timeouts
+speed limiting
+acceleration limiting
+jerk limiting
+smooth stop behavior in supported controllers
+```
+
+`ros2_kinematic_guard` is not intended to replace those mechanisms.
+
+It provides a controller-agnostic command-integrity layer that can be useful when:
+
+```text
+the robot does not use ros2_control
+the base driver is proprietary
+the driver only exposes a raw command subscriber
+fleet-level diagnostics are needed
+bag / MCAP post-analysis is needed
+VDA5050-style state reporting is desired
+```
+
+In short:
+
+```text
+ros2_control:
+  executes safely inside well-structured controllers
+
+ros2_kinematic_guard:
+  reports whether the recent command/feedback window is still trustworthy
+
+reporter_node.py:
+  translates that signal into ROS diagnostics and VDA5050-style fleet telemetry
+```
+
+---
+
+## Scope
+
+`ros2_kinematic_guard` is **not** a certified safety controller.
+
+It does not replace:
+
+```text
+hardware emergency stop
+certified safety PLCs
+safety-rated stop functions
+vehicle-level safety design
+ISO 3691-4 safety validation
+ros2_control controller-side protections
+manufacturer braking curves
+```
+
+It provides:
+
+```text
+a local command-integrity guard
+a NARH-lite residual signal
+a deterministic resync gate
+ROS-native diagnostics
+VDA5050-style telemetry proof-of-concept
+```
+
+The `VDA5050-style` payload is not official VDA 5050 schema.
+
+It is an experimental structure for discussing how command-execution integrity could be exposed in heterogeneous fleets.
+
+---
+
+## Key concepts
+
+### Command semantic collapse
+
+```text
+The message arrives.
+But it is no longer executable.
+```
+
+This can happen when wireless timing causes stale, bursty, duplicated, delayed, or replayed command windows.
+
+---
+
+### NARH-lite residual
+
+NARH-lite compares:
+
+```text
+previous command
+current command
+previous odometry
+current odometry
+```
+
+It combines timing, smoothness, and command-vs-odom consistency into one residual:
+
+```text
+R_NAR
+```
+
+If `R_NAR` crosses thresholds, the guard can slow down, brake, or enter resync.
+
+---
+
+### BRAKE_AND_RESYNC
+
+When command timing collapses, the guard does not simply keep forwarding the latest message.
+
+It can:
+
+```text
+1. stop forwarding poisoned command windows
+2. output safe zero or limited command
+3. flush local command/odom buffers
+4. wait for fresh command + fresh odometry
+5. require N clean windows
+6. release control through RECOVERED
+```
+
+---
+
+### Fleet observability
+
+The same residual that triggers local protection is translated into:
+
+```text
+latencyClass
+executionState
+recommendedVehicleResponse
+suggestedFleetAction
+```
+
+Example:
+
+```text
+state=RESYNCING
+latency=CRITICAL
+vehicle_response=RESYNC_REQUIRED
+fleet_action=HOLD_NEW_ORDERS
+```
+
+This allows the fleet/orchestration layer to reason about degraded vehicles before assigning new orders or intersection-heavy tasks.
+
+---
+
+## Technical design
+
+### Local window
+
+For each evaluation step:
+
+```text
 C_prev = previous command
 C_curr = current command
 
 O_prev = previous odometry
 O_curr = current odometry
 ```
+
 The guard estimates:
-```
+
+```text
 expected_delta = integrate(C_prev, C_curr, dt)
 measured_delta = O_curr - O_prev
 ```
 
-### 3.2 Residual Construction
+---
+
+### Residual components
 
 The NARH-lite residual combines:
-```
+
+```text
 timeflow residual
 stale command residual
 phase mismatch residual
@@ -254,8 +603,10 @@ command acceleration violation
 command jerk violation
 command-odom inconsistency
 ```
+
 Conceptually:
-```
+
+```text
 R_NAR =
   w1 * R_timeflow
 + w2 * R_stale
@@ -264,135 +615,16 @@ R_NAR =
 + w5 * R_jerk
 + w6 * R_cmd_odom
 ```
-When:
-```
-R_NAR > yellow_threshold
-```
-the guard enters:
-```
-YELLOW_SLOWDOWN
-```
-When:
-```
-R_NAR > red_threshold
-```
-the guard enters:
-```
-RED_BRAKE → RESYNCING
-```
 
-### 3.3 Resync Gate
+The implementation separates components so that diagnostics can explain why the guard intervened.
 
-After a dangerous timing-collapse window, old command/odom buffers are flushed.
+---
 
-The guard only releases motion after receiving several clean, fresh, physically consistent windows.
-```
-bad timing
-  ↓
-RED_BRAKE
-  ↓
-flush poisoned window
-  ↓
-RESYNCING
-  ↓
-fresh cmd + fresh odom
-  ↓
-RECOVERED
-```
-### 3.4 Performance Overhead
-`ros2_kinematic_guard` is designed as a lightweight middleware layer.
-| Failure Mode               | Heartbeat / Timeout | NARH Kinematic Guard                                |
-| -------------------------- | ------------------- | --------------------------------------------------- |
-| Packet loss                | Can detect silence  | Can detect silence and brake                        |
-| Stale command              | Often missed        | Detected through timing and kinematic inconsistency |
-| Burst command              | Often missed        | Detected through residual spike                     |
-| Replay command             | Often missed        | Detected through stale / command-odom conflict      |
-| Command/odom contradiction | Not checked         | Directly measured                                   |
-| Recovery                   | Timeout-based       | Fresh-window resync gate                            |
+### State transitions
 
+Simplified:
 
-The NARH-lite core does not run a global optimizer, a factor graph, or a full dynamics simulator. Each guard tick only evaluates a small local window:
-```
-previous command
-current command
-previous odometry
-current odometry
-```
-The current implementation uses:
-```
-constant-size buffers
-simple SE(2)-style kinematic integration
-scalar residual components
-threshold-based finite-state logic
-```
-So the computational complexity per evaluation is effectively:
-```
-O(1)
-```
-This makes it suitable for typical ROS 2 mobile robot control rates such as:
-```
-20 Hz
-50 Hz
-100 Hz
-```
-The default launch file runs the guard loop at `20 Hz`, corresponding to an intervention opportunity every control tick, approximately `50 ms`.
-
->Note: The current Python implementation is intended as a transparent reference implementation. For production deployment, the same NARH-lite core can be ported to C++ or embedded inside a lower-level controller.
-
-### 3.5 Generalization Across Robot Types
-The first version targets mobile robot command/feedback streams using standard ROS 2 interfaces:
-```
-geometry_msgs/Twist
-geometry_msgs/TwistStamped
-nav_msgs/Odometry
-```
-It is naturally suitable for:
-```
-differential-drive robots
-skid-steer robots
-omni-directional mobile bases
-simulation / rosbag / MCAP replay
-wireless teleoperation pipelines
-```
-For Ackermann steering or more complex platforms, the architecture remains the same, but the expected-motion model should be adapted.
-
-In the current implementation, this means modifying the expected kinematic delta inside the NARH-lite core:
-```
-expected_delta = integrate(command_window, dt)
-measured_delta = odom_curr - odom_prev
-R_cmd_odom = || expected_delta - measured_delta ||
-```
-For example:
-```
-Differential drive:
-  command = (vx, wz)
-
-Ackermann:
-  command = (speed, steering_angle)
-
-Omni base:
-  command = (vx, vy, wz)
-
-Legged base:
-  command = body velocity + gait/foot-contact consistency
-```
-The guard is therefore not tied to one robot model. It is tied to one principle:
-```
-a command should remain executable under the observed feedback stream
-```
-### 3.6 FSM Predictability
-`ros2_kinematic_guard` uses a deterministic finite-state machine.
-The main states are:
-```
-GREEN
-YELLOW_SLOWDOWN
-RED_BRAKE
-RESYNCING
-RECOVERED
-```
-The transition logic is transparent and parameter-driven.
-A simplified view:
-```
+```text
 if R_NAR < yellow_threshold:
     GREEN
 
@@ -405,14 +637,130 @@ if R_NAR >= red_threshold:
 if fresh command/odom windows remain consistent for N frames:
     RECOVERED -> GREEN
 ```
-The emergency behavior is not random. It is controlled by explicit parameters:
+
+A low instantaneous `R_NAR` does not always mean immediate recovery.
+
+If the state is still `RESYNCING`, the reporter may still output:
+
+```text
+latency=CRITICAL
+vehicle_response=RESYNC_REQUIRED
+fleet_action=HOLD_NEW_ORDERS
 ```
+
+until enough clean windows have been observed.
+
+---
+
+## Performance
+
+The NARH-lite core is intentionally lightweight.
+
+It does not run:
+
+```text
+global optimization
+factor graph solving
+full rigid-body simulation
+full dynamics control
+```
+
+It uses:
+
+```text
+constant-size buffers
+simple SE(2)-style integration
+scalar residual components
+threshold-based state transitions
+```
+
+Per evaluation complexity is effectively:
+
+```text
+O(1)
+```
+
+The default launch file runs the guard loop at:
+
+```text
+20 Hz
+```
+
+which gives an intervention opportunity every control tick, approximately:
+
+```text
+50 ms
+```
+
+The current implementation is Python-based for transparency and easy testing.
+
+For production deployment, the same NARH-lite core could be ported to C++ or embedded closer to a lower-level controller.
+
+---
+
+## Supported interfaces
+
+The first version targets mobile robot command/feedback streams using:
+
+```text
+geometry_msgs/Twist
+geometry_msgs/TwistStamped
+nav_msgs/Odometry
+std_msgs/String
+diagnostic_msgs/DiagnosticArray
+```
+
+It is naturally suitable for:
+
+```text
+differential-drive robots
+skid-steer robots
+omni-directional mobile bases
+simulation replay
+rosbag / MCAP analysis
+wireless teleoperation pipelines
+```
+
+For Ackermann steering or more complex platforms, the same architecture can be used, but the expected-motion model should be adapted.
+
+Examples:
+
+```text
+Differential drive:
+  command = (vx, wz)
+
+Ackermann:
+  command = (speed, steering_angle)
+
+Omni base:
+  command = (vx, vy, wz)
+
+Legged base:
+  command = body velocity + gait / foot-contact consistency
+```
+
+The guard is not tied to one robot model.
+
+It is tied to one principle:
+
+```text
+a command should remain executable under the observed feedback stream
+```
+
+---
+
+## Parameters
+
+Important parameters include:
+
+```text
 yellow_threshold
 red_threshold
 slowdown_scale
-node_resync_good_frames
-resync_required_good_frames
 cmd_ttl
+min_dt
+max_dt
+phase_tolerance
 max_linear_accel
 max_angular_accel
 max_linear_jerk
@@ -420,127 +768,194 @@ max_angular_jerk
 position_tolerance
 yaw_tolerance
 lateral_tolerance
+node_resync_good_frames
+resync_required_good_frames
+publish_zero_until_ready
+flush_buffers_on_red
 ```
-These parameters can be configured through:
+
+Reporter parameters include:
+
+```text
+guard_status_topic
+guard_residual_topic
+diagnostics_topic
+vda_state_topic
+summary_topic
+vehicle_id
+manufacturer
+serial_number
+status_timeout
+publish_rate_hz
 ```
+
+These can be configured through:
+
+```text
 ROS 2 launch arguments
 YAML parameter files
 ROS 2 node parameters
 ```
-This gives developers control over:
-```
-when slowdown happens
-when braking happens
-how many clean frames are required before recovery
-how aggressive the kinematic consistency check should be
-```
-**Why Not Just Use Heartbeat or Timeout?**
-
-Heartbeat and timeout mechanisms answer a simpler question:
-```
-Did a message arrive recently?
-```
-NARH Guard asks a stricter question:
-```
-Is this command still executable under the current odometry stream?
-```
-That difference matters under bad Wi-Fi / 5G timing.
-
-A stale command may still arrive before a timeout.
-
-A burst of commands may still be “valid messages.”
-
-A replayed command may still look syntactically correct.
-
-But NARH Guard checks whether the command window and feedback window remain kinematically consistent.
 
 ---
 
-## 4. Mathematical Appendix: NARH-lite for ROS 2 Command Flow
-*The theoretical origin of this project stems from the original NARH (Non-Associative Residual Hypothesis) formulated for discrete physics engines. For the full mathematical derivation and high-dimensional analysis, please refer to SIPA [(Simulation Integrity & Physics Auditor)](https://github.com/ZC502/SIPA/blob/main/README.md#non-associative-residual-hypothesis-narh)..*
-### 4.1 Background
+## Package structure
+
+```text
+ros2_kinematic_guard/
+├── launch/
+│   └── start_pressure_test.launch.py
+├── ros2_kinematic_guard/
+│   ├── __init__.py
+│   ├── narh_lite_core.py
+│   ├── jitter_injector_node.py
+│   ├── kinematic_guard_node.py
+│   ├── synthetic_odom_provider.py
+│   └── reporter_node.py
+├── package.xml
+├── setup.py
+├── setup.cfg
+└── resource/
+    └── ros2_kinematic_guard
+```
+
+---
+
+## Mathematical appendix: NARH-lite for ROS 2 command flow
+
+### Background
+
 The original NARH formulation was developed for discrete rigid-body simulation pipelines.
 
 In that setting, a system state is advanced by a sequence of sub-operators:
-```
+
+```text
 s[t+1] = Ψσ(k) ∘ ... ∘ Ψσ(1)(s[t])
 ```
-where the execution order may depend on solver internals such as constraint partitioning, thread scheduling, batching, or projection steps. The original discrete associator is written as:
-```
+
+where the execution order may depend on solver internals such as constraint partitioning, thread scheduling, batching, or projection steps.
+
+The original discrete associator is written as:
+
+```text
 A(a,b,c;s) =
     ((Ψa ∘ Ψb) ∘ Ψc)(s)
   - (Ψa ∘ (Ψb ∘ Ψc))(s)
 ```
+
 and the residual is:
-```
+
+```text
 R[t] = || A(a,b,c;s[t]) ||
 ```
-The important point is that NARH does **not** claim that the physical state space itself is mathematically invalid. It measures order-dependent deviations introduced by discrete numerical or computational pipelines.
+
+The important point is that NARH does **not** claim that the physical state space itself is mathematically invalid.
+
+It measures order-dependent deviations introduced by discrete numerical or computational pipelines.
 
 `ros2_kinematic_guard` applies the same idea to ROS 2 command-flow consistency.
 
-### 4.2 Command-Flow Operators
-In ROS 2 mobile robot control, the relevant pipeline is not a simulator constraint solver. It is a distributed command/feedback stream:
+For the full high-dimensional NARH research background, see:
+
+```text
+SIPA — Simulation Integrity & Physics Auditor
+https://github.com/ZC502/SIPA
 ```
+
+---
+
+### Command-flow operators
+
+In ROS 2 mobile robot control, the relevant pipeline is not a simulator constraint solver.
+
+It is a distributed command/feedback stream:
+
+```text
 command message
 network delivery
 controller execution
 odometry feedback
 resync / recovery
 ```
-NARH-lite models this using a local kinematic window.
 
-For each evaluation step:
-```
+NARH-lite models this using a local kinematic window:
+
+```text
 C_prev = previous command
 C_curr = current command
 
 O_prev = previous odometry
 O_curr = current odometry
 ```
+
 The guard compares two interpretations of the same short motion window.
 
-### 4.3 Command-Flow OperatorsExpected Motion
+---
+
+### Expected motion
+
 The command stream predicts a local motion delta:
-```
+
+```text
 Δ_expected = Integrate(C_prev, C_curr, dt)
 ```
+
 For the default differential-drive / planar base model:
-```
+
+```text
 v_avg = 0.5 * (v_prev + v_curr)
 w_avg = 0.5 * (w_prev + w_curr)
 
 Δx_expected   = v_avg * dt
 Δyaw_expected = w_avg * dt
 ```
-### 4.4 Measured Motion
+
+---
+
+### Measured motion
+
 The odometry stream gives the measured local delta:
-```
+
+```text
 Δ_measured = LocalFrame(O_curr - O_prev)
 ```
+
 For planar motion:
-```
+
+```text
 Δx_measured
 Δy_measured
 Δyaw_measured
 ```
-### 4.5 Kinematic Residual
+
+---
+
+### Kinematic residual
+
 The command/feedback residual is:
-```
+
+```text
 R_cmd_odom =
     || Δ_expected - Δ_measured ||
 ```
+
 In practice, the implementation separates the residual into interpretable components:
-```
+
+```text
 linear_gap
 lateral_gap
 angular_gap
 ```
-This allows the status output to explain why the guard intervened.
 
-### 4.6 Time-Flow Residual
+This allows diagnostics to explain why the guard intervened.
+
+---
+
+### Time-flow residual
+
 Bad wireless timing often appears as:
-```
+
+```text
 stale commands
 near-zero dt
 large dt jumps
@@ -548,24 +963,35 @@ phase mismatch between cmd and odom
 burst delivery
 replay windows
 ```
+
 NARH-lite therefore adds timing residuals:
-```
+
+```text
 R_timeflow
 R_stale
 R_phase
 ```
 
-### 4.7 Command Smoothness Residual
+---
+
+### Command smoothness residual
+
 A command may be syntactically valid but physically unreasonable.
+
 For example, a burst window can imply impossible acceleration or jerk:
-```
+
+```text
 R_accel = violation(command_acceleration_limit)
 R_jerk  = violation(command_jerk_limit)
 ```
 
-### 4.8 Final NARH-lite Residual
+---
+
+### Final NARH-lite residual
+
 The final residual is a weighted composition:
-```
+
+```text
 R_NAR =
 sqrt(
     w_timeflow * R_timeflow^2
@@ -576,36 +1002,62 @@ sqrt(
   + w_odom     * R_cmd_odom^2
 )
 ```
-This is not a full octonion solver. It is a lightweight engineering projection of NARH onto ROS 2 command-flow safety.
 
-### 4.9 Decision Rule
-The finite-state machine uses transparent thresholds:
-```
-if R_NAR < yellow_threshold:
-    GREEN
+This is not a full octonion solver.
 
-if R_NAR >= yellow_threshold:
-    YELLOW_SLOWDOWN
+It is a lightweight engineering projection of NARH onto ROS 2 command-flow integrity.
 
-if R_NAR >= red_threshold:
-    RED_BRAKE
-    BRAKE_AND_RESYNC
-```
-During `BRAKE_AND_RESYNC`, the guard:
-```
-1. outputs safe zero or limited safe command
-2. flushes poisoned command/odom windows
-3. waits for fresh command + fresh odometry
-4. requires N clean windows
-5. releases control through RECOVERED
+---
+
+## Roadmap
+
+Planned improvements:
+
+```text
+C++ implementation of NARH-lite core
+Dedicated CommandIntegrity message experiment
+DiagnosticStatus convention documentation
+rosbag / MCAP offline analyzer
+VDA5050 bridge prototype
+Ackermann model adapter
+Omni-base model adapter
+Foxglove / RViz visualization
+Benchmark script for per-evaluation latency
 ```
 
-### 4.10 Interpretation
-NARH-lite does not repair Wi-Fi, 5G, DDS, QoS, or robot drivers.
+---
 
-It provides a physical executability check:
+## Suggested use cases
+
+```text
+mobile robots over Wi-Fi / 5G
+recovery teleoperation
+warehouse AMR diagnostics
+research robot command-stream auditing
+bag / MCAP post-incident analysis
+fleet-level degraded-mode observability
+VDA5050-style mixed-fleet telemetry experiments
 ```
-This message arrived.
-But should the robot still execute it?
+
+---
+
+## License
+
+Apache-2.0
+
+---
+
+## Status
+
+Experimental research prototype.
+
+Use it as:
+
+```text
+a diagnostic layer
+a pressure-test tool
+a command-integrity telemetry bridge
+a starting point for ROS 2 / fleet-level degraded-mode discussions
 ```
-If the answer is no, the guard intervenes before bad timing becomes dangerous motion.
+
+Do not use it as a certified safety function.
