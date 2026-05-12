@@ -25,6 +25,7 @@ setup(
             "jitter_injector_node = ros2_kinematic_guard.jitter_injector_node:main",
             "kinematic_guard_node = ros2_kinematic_guard.kinematic_guard_node:main",
             "synthetic_odom_provider = ros2_kinematic_guard.synthetic_odom_provider:main",
+            "command_integrity_reporter_node = ros2_kinematic_guard.reporter_node:main",
         ],
     },
 )
