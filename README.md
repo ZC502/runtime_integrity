@@ -1,3 +1,7 @@
+This project is now part of the broader CLIM(Causal Link Integrity Middleware) concept:
+
+Causal Link Integrity Middleware, powered by NARH. https://github.com/ZC502/CLIM-Causal-Link-Integrity-Middleware.git
+
 # ROS 2 Kinematic Guard (NARH)
 
 ## Command-Execution-Integrity Telemetry for ROS 2 and VDA5050-style Mixed Fleets
