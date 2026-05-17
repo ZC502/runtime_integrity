@@ -33,11 +33,16 @@ Frequent hard stops may contribute to:
 
 ## Why Traditional Methods Fail (Why Not Just A Timeout?)
 
-Most ROS 2 mobile robots rely on a basic 
-`cmd_vel_timeout`
- node. If no command arrives within 0.5s, it publishes 0 to the base driver. 
+Most ROS 2 mobile robots rely on a basic `cmd_vel_timeout` node. If no command arrives within 0.5s, it publishes 0 to the base driver. 
 
-**This laboratory-ideal assumption fails catastrophically in real industrial environments:**
+Timeouts are necessary, but they answer only one question:
+```text
+Did a command arrive recently?
+```
+They do not answer:
+
+**Does the robot’s measured motion still match the command stream?**
+
 - **The "Ostrich Strategy" & Hard E-Stop Escalation:**
    When a robot spins out due to wheel slip or localization jumps, the controller continues to over-correct, sending aggressive commands. Currently, the industry relies on a crude fallback: let the robot shake, spin, or crash until the physical 
 **Safety LIDAR / Hardware E-stop**
@@ -48,6 +53,8 @@ Most ROS 2 mobile robots rely on a basic
  are injected into the base driver within 5 milliseconds like a machine gun. The robot experiences a violent acceleration burst ("Ghost Commands") before the timeout can even react.
 
 ### The Hidden Cost of Frequent Hard E-Stops:
+
+Depending on the platform and payload, frequent hard stops may contribute to:
 - **Mechanical Trauma:**
  A heavy AMR stopping instantly from full speed experiences massive inertial shock, causing gear striping (减速机打齿), shaft deformation, and wheel wear.
 - **Electrical Back-EMF:**
@@ -75,18 +82,20 @@ Kinematic Guard
         ↓
 base driver
 ```
+
 ## Core question
 Traditional timeout checks ask:
 **Did a command arrive recently?**
 Kinematic Guard asks:
 **Is the robot still moving according to the command it was just given?**
-Main output
+
+## Main KinematicStatus Output
 ```JSON
 {
   "status": "RESYNCING",
   "residual": 5.391,
   "causalAlignment": "BROKEN",
-  "dominantCause": "PHASE",
+  "dominantCause": "WHEEL_SLIP",
   "guardAction": "BRAKE_AND_RESYNC",
   "safeCmd": {
     "linear_vx": 0.0,
@@ -95,11 +104,34 @@ Main output
 }
 ```
 
+## Quick Start
+
+```bash
+cd ros2_kinematic_guard
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+```
+
 ## 5-minute Demo: Wheel Slip Before Hard E-stop
 
-Terminal 1:
+**Deployment Modes**
+- `mode:=observe` — passive monitoring only. No control intervention.
+- `mode:=passthrough` — inline wiring test. `/safe_cmd_vel` equals `/cmd_vel`.
+- `mode:=guard` — active mode. Can clamp velocity or enter `BRAKE_AND_RESYNC`.
 
+Runtime parameter tuning is planned. For v0.2, thresholds are configured through launch arguments or YAML parameters.
+
+**Terminal 1:**
+
+Option A: Observe Mode — passive, no intervention
+```bash
+ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py profile:=wheel_slip mode:=observe
+```
+Option B: Guard Mode — active clamp / brake / resync
+```bash
 ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py profile:=wheel_slip mode:=guard
+```
 
 Terminal 2:
 
@@ -111,3 +143,75 @@ ros2 topic echo /kinematic_guard/status
 
 The robot was still receiving valid velocity commands, but its odometry no longer matched the commanded motion.
 Kinematic Guard detected the execution collapse before a hard E-stop would be required.
+
+### Pretty-print KinematicStatus JSON
+
+`/kinematic_guard/status` is published as `std_msgs/String`, so a raw ROS 2 echo looks like this:
+
+```text
+data: '{"timestamp": ... }'
+---
+```
+For a clean, human-readable JSON view, use:
+```
+ros2 topic echo /kinematic_guard/status --field data --once --full-length \
+| awk '/^---$/{exit} {print}' \
+| python3 -m json.tool
+```
+For continuous monitoring:
+```Bash
+watch -n 0.5 'ros2 topic echo /kinematic_guard/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
+```
+To save one status sample:
+```Bash
+ros2 topic echo /kinematic_guard/status --field data --once --full-length \
+| awk '/^---$/{exit} {print}' \
+| python3 -m json.tool \
+> kinematic_status_example.json
+```
+Verification Command:
+```Bash
+ros2 topic echo /kinematic_guard/status --field data --once --full-length \
+| awk '/^---$/{exit} {print}' \
+| python3 -m json.tool
+```
+```Bash
+ros2 topic echo /safe_cmd_vel
+```
+
+## Expected Behavior
+
+During the wheel-slip window, you should see:
+
+```json
+{
+  "status": "RESYNCING",
+  "causalAlignment": "BROKEN",
+  "dominantCause": "WHEEL_SLIP",
+  "guardAction": "BRAKE_AND_RESYNC",
+  "safeCmd": {
+    "linear_vx": 0.0,
+    "angular_wz": 0.0
+  }
+}
+```
+
+In `mode:=observe`, the status turns red but the command stream is not modified.
+
+In `mode:=guard`, /`safe_cmd`_vel is clamped or set to zero during `BRAKE_AND_RESYNC`.
+
+## Optional Demo: Localization Jump
+
+```bash
+ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py profile:=localization_jump mode:=guard
+```
+
+hen publish a smooth command:
+```bash
+ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5}, angular: {z: 0.0}}"
+```
+Expected `dominantCause`:
+```
+LOCALIZATION_JUMP
+```
+
