@@ -215,3 +215,15 @@ Expected `dominantCause`:
 LOCALIZATION_JUMP
 ```
 
+## What is NARH-lite?
+
+NARH-lite is the lightweight residual engine used inside Kinematic Guard.
+
+It compares the recent command stream with odometry feedback over a sliding time window and asks:
+
+```text
+Did the robot move in a way that is still consistent with the command it just received?
+```
+In this package, NARH-lite is used only as an engineering metric for runtime command-feedback consistency.
+
+It does not replace safety-rated E-stop systems, certified safety controllers, or hardware safety layers.
