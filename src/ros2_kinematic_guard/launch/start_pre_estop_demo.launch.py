@@ -39,6 +39,16 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
+            "slip_start_sec",
+            default_value="3.0",
+            description="Seconds after first command before wheel slip starts.",
+        ),
+        DeclareLaunchArgument(
+            "slip_duration_sec",
+            default_value="20.0",
+            description="How long wheel slip lasts.",
+        ),
+        DeclareLaunchArgument(
             "profile",
             default_value="wheel_slip",
             description="Demo fault profile: normal, wheel_slip, localization_jump.",
@@ -166,8 +176,8 @@ def generate_launch_description():
                 "max_angular_accel": 2.5,
 
                 # wheel_slip profile
-                "slip_start_sec": 3.0,
-                "slip_duration_sec": 3.0,
+                "slip_start_sec": slip_start_sec,
+                "slip_duration_sec": slip_duration_sec,
                 "slip_ratio": 0.05,
                 "slip_lateral_drift_mps": 0.05,
 
