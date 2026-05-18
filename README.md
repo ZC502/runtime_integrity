@@ -4,9 +4,7 @@
 
 `ros2_kinematic_guard` monitors `/cmd_vel` and `/odom` to detect when a mobile robot’s physical response no longer matches the command stream.
 
-Before the robot escalates into shaking, spinning, collision risk, or hard E-stop, Kinematic Guard can slow down, brake, and resync locally.
-
-It is designed for common AMR/AGV failure modes:
+Before the robot escalates into shaking, spinning, collision risk, or hard E-stop, Kinematic Guard can slow down, brake, and resync locally. It is designed for common AMR/AGV failure modes:
 
 - wheel slip on wet or oily floors
 - wheel-speed / odometry mismatch
@@ -17,9 +15,7 @@ It is designed for common AMR/AGV failure modes:
 
 ## Why Pre-E-stop Detection Matters
 
-Safety-rated E-stop systems are the final protection layer.
-
-Kinematic Guard does not replace them.
+Safety-rated E-stop systems are the final protection layer. Kinematic Guard does not replace them.
 
 It tries to detect execution collapse earlier, before the certified safety layer is forced to intervene.
 
@@ -153,97 +149,132 @@ source install/setup.bash
 
 ## 5-minute Demo: Wheel Slip Before Hard E-stop
 
+This demo runs a lightweight virtual AMR/AGV without Gazebo or Isaac Sim.
+
+It creates this closed loop:
+
+```text
+/cmd_vel
+   ↓
+Kinematic Guard
+   ↓
+/safe_cmd_vel
+   ↓
+Mock Robot
+   ↓
+/odom
+   ↑
+Kinematic Guard
+```
+
+The mock robot injects a wheel-slip fault after it receives the first non-zero `/safe_cmd_vel`.
+
+To make the demo easy to observe, the command below keeps the wheel-slip window open for a long time:
+```
+slip_duration_sec:=9999.0
+```
 **Deployment Modes**
 - `mode:=observe` — passive monitoring only. No control intervention.
 - `mode:=passthrough` — inline wiring test. `/safe_cmd_vel` equals `/cmd_vel`.
 - `mode:=guard` — active mode. Can clamp velocity or enter `BRAKE_AND_RESYNC`.
 
-Runtime parameter tuning is planned. For v0.2, thresholds are configured through launch arguments or YAML parameters.
+**Terminal 0: Clean old demo processes**
 
-**Terminal 1:**
+Before switching between `observe` and `guard`, stop old nodes:
+```Bash
+pkill -f kinematic_guard_node || true
+pkill -f mock_robot_simulator || true
+pkill -f "ros2 topic pub" || true
+ros2 daemon stop
+ros2 daemon start
+```
 
-Option A: Observe Mode — passive, no intervention
-```bash
+**Terminal 1A: Observe Mode — passive, no intervention**
+```Bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
-ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py profile:=wheel_slip mode:=observe
+ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py \
+  profile:=wheel_slip \
+  mode:=observe \
+  slip_start_sec:=3.0 \
+  slip_duration_sec:=9999.0
 ```
-Option B: Guard Mode — active clamp / brake / resync
-```bash
+In this mode, the Guard reports the failure but does not modify the command stream.
+
+**Terminal 1B: Guard Mode — active clamp / brake / resync**
+
+Use this instead of Terminal 1A when you want to see /safe_cmd_vel being clamped or set to zero:
+```Bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
-ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py profile:=wheel_slip mode:=guard
+ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py \
+  profile:=wheel_slip \
+  mode:=guard \
+  slip_start_sec:=3.0 \
+  slip_duration_sec:=9999.0
 ```
 
-Terminal 2:
-```bash
+**Terminal 2: Publish a smooth velocity command**
+```Bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
 ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.8}, angular: {z: 0.0}}"
 ```
 
-Terminal 3:
-```bash
+**Terminal 3: Verify that the mock robot is actually slipping**
+
+Do this first. The Guard can only detect wheel slip if the mock robot is currently injecting it.
+```Bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
-ros2 topic echo /kinematic_guard/status
+watch -n 0.2 'ros2 topic echo /mock_robot/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
 ```
-The robot was still receiving valid velocity commands, but its odometry no longer matched the commanded motion.
-Kinematic Guard detected the execution collapse before a hard E-stop would be required.
-
-### Pretty-print KinematicStatus JSON
-
-`/kinematic_guard/status` is published as `std_msgs/String`, so a raw ROS 2 echo looks like this:
-
-```text
-data: '{"timestamp": ... }'
----
+Wait until you see:
+```JSON
+{
+  "profile": "wheel_slip",
+  "faultState": "WHEEL_SLIP"
+}
 ```
-For a clean, human-readable JSON view, use:
+If you see:
+```JSON
+{
+  "faultState": "NONE"
+}
 ```
+then you are outside the fault window, and `/kinematic_guard/status` may correctly remain `GREEN`.
+
+**Terminal 4: Watch Kinematic Guard status**
+```Bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
-ros2 topic echo /kinematic_guard/status --field data --once --full-length \
-| awk '/^---$/{exit} {print}' \
-| python3 -m json.tool
+watch -n 0.2 'ros2 topic echo /kinematic_guard/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
 ```
-For continuous monitoring:
+
+**Terminal 5: Watch the actual command sent to the base**
 ```Bash
-watch -n 0.5 'ros2 topic echo /kinematic_guard/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
-```
-To save one status sample:
-```Bash
-ros2 topic echo /kinematic_guard/status --field data --once --full-length \
-| awk '/^---$/{exit} {print}' \
-| python3 -m json.tool \
-> kinematic_status_example.json
-```
-Verification Command:
-```Bash
-ros2 topic echo /kinematic_guard/status --field data --once --full-length \
-| awk '/^---$/{exit} {print}' \
-| python3 -m json.tool
-```
-```Bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
 ros2 topic echo /safe_cmd_vel
 ```
-By default, the mock robot injects wheel slip after a short delay.  
-Use the continuous monitoring command below to catch the transition from `GREEN` to `RESYNCING`.
 
-### Healthy Window Example
+### Expected Behavior
 
-Outside the fault-injection window, the guard should remain quiet:
+**Healthy window**
 
-```json
+When `/cmd_vel` and `/odom` agree, the Guard should stay quiet:
+```JSON
 {
   "status": "GREEN",
   "residual": 0.0009,
   "causalAlignment": "ALIGNED",
+  "dominantCause": "NONE",
   "guardAction": "OBSERVE_ONLY",
   "safeCmd": {
     "linear_vx": 0.8,
@@ -251,27 +282,77 @@ Outside the fault-injection window, the guard should remain quiet:
   }
 }
 ```
-This shows that the guard does not create false positives when `/cmd_vel` and `/odom` agree.
+This is normal and desirable. It shows that Kinematic Guard does not create false positives when the robot motion matches the command stream.
 
-## Expected Behavior
+**Wheel-slip window in observe mode**
 
-During the wheel-slip window, you should see:
+When `/mock_robot/status` shows `faultState=WHEEL_SLIP`, Kinematic Guard should report that command-feedback integrity is broken.
 
-```json
+In `mode:=observe`, the Guard reports the failure but does not modify the command stream:
+```JSON
+{
+  "status": "RESYNCING",
+  "causalAlignment": "BROKEN",
+  "dominantCause": "WHEEL_SLIP",
+  "guardAction": "OBSERVE_ONLY",
+  "mode": "observe",
+  "controlInterceptionEnabled": false,
+  "safeCmd": {
+    "linear_vx": 0.8,
+    "angular_wz": 0.0
+  }
+}
+```
+
+**Wheel-slip window in guard mode**
+
+In `mode:=guard`, the Guard can clamp or brake the command stream:
+```JSON
 {
   "status": "RESYNCING",
   "causalAlignment": "BROKEN",
   "dominantCause": "WHEEL_SLIP",
   "guardAction": "BRAKE_AND_RESYNC",
+  "mode": "guard",
+  "controlInterceptionEnabled": true,
   "safeCmd": {
     "linear_vx": 0.0,
     "angular_wz": 0.0
   }
 }
 ```
-In `mode:=observe`, the status turns red but the command stream is not modified.
+At the same time, `/safe_cmd_vel` should show the clamped or zero command.
 
-In `mode:=guard`, `/safe_cmd_vel` is clamped or set to zero during `BRAKE_AND_RESYNC`.
+**Troubleshooting**
+
+**I only see `GREEN`**
+
+First check the mock robot:
+```Bash
+ros2 topic echo /mock_robot/status --field data --once --full-length \
+| awk '/^---$/{exit} {print}' \
+| python3 -m json.tool
+```
+If `faultState` is `NONE`, then the robot is not currently slipping. This is a healthy window.
+
+If `faultState` is `WHEEL_SLIP` but Kinematic Guard still stays `GREEN`, check for duplicate `/odom` publishers:
+```Bash
+ros2 topic info /odom -v
+```
+There should be only one `/odom` publisher from `mock_robot`.
+
+**I see `LOCALIZATION_JUMP` during the wheel-slip demo**
+
+This usually means there are multiple `/odom` publishers or old demo nodes still running.
+
+Clean old processes:
+```Bash
+pkill -f kinematic_guard_node || true
+pkill -f mock_robot_simulator || true
+pkill -f "ros2 topic pub" || true
+ros2 daemon stop
+ros2 daemon start
+```
 
 ## Optional Demo: Localization Jump
 
