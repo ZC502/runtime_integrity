@@ -178,6 +178,26 @@ ros2 topic echo /kinematic_guard/status --field data --once --full-length \
 ```Bash
 ros2 topic echo /safe_cmd_vel
 ```
+By default, the mock robot injects wheel slip after a short delay.  
+Use the continuous monitoring command below to catch the transition from `GREEN` to `RESYNCING`.
+
+### Healthy Window Example
+
+Outside the fault-injection window, the guard should remain quiet:
+
+```json
+{
+  "status": "GREEN",
+  "residual": 0.0009,
+  "causalAlignment": "ALIGNED",
+  "guardAction": "OBSERVE_ONLY",
+  "safeCmd": {
+    "linear_vx": 0.8,
+    "angular_wz": 0.0
+  }
+}
+```
+This shows that the guard does not create false positives when `/cmd_vel` and `/odom` agree.
 
 ## Expected Behavior
 
@@ -195,10 +215,9 @@ During the wheel-slip window, you should see:
   }
 }
 ```
-
 In `mode:=observe`, the status turns red but the command stream is not modified.
 
-In `mode:=guard`, /`safe_cmd`_vel is clamped or set to zero during `BRAKE_AND_RESYNC`.
+In `mode:=guard`, `/safe_cmd_vel` is clamped or set to zero during `BRAKE_AND_RESYNC`.
 
 ## Optional Demo: Localization Jump
 
@@ -206,7 +225,7 @@ In `mode:=guard`, /`safe_cmd`_vel is clamped or set to zero during `BRAKE_AND_RE
 ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py profile:=localization_jump mode:=guard
 ```
 
-hen publish a smooth command:
+Then publish a smooth command:
 ```bash
 ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5}, angular: {z: 0.0}}"
 ```
