@@ -134,13 +134,13 @@ ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py profile:=wheel_s
 ```
 
 Terminal 2:
-
+```bash
 ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.8}, angular: {z: 0.0}}"
-
+```
 Terminal 3:
-
+```bash
 ros2 topic echo /kinematic_guard/status
-
+```
 The robot was still receiving valid velocity commands, but its odometry no longer matched the commanded motion.
 Kinematic Guard detected the execution collapse before a hard E-stop would be required.
 
