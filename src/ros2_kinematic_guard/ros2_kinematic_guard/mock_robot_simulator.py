@@ -209,8 +209,6 @@ class MockRobotSimulator(Node):
         self.cmd_wz = finite_or(msg.angular.z)
         self.last_cmd_time = now
 
-        # Do not start the fault timer on the initial zero /safe_cmd_vel.
-        # Start only when the mock robot receives a real motion command.
         motion_cmd = abs(self.cmd_vx) > 1e-3 or abs(self.cmd_wz) > 1e-3
 
         if self.first_cmd_time is None and motion_cmd:
