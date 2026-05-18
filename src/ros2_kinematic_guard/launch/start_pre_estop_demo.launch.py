@@ -37,6 +37,10 @@ def generate_launch_description():
     red_threshold = LaunchConfiguration("red_threshold")
     publish_tf = LaunchConfiguration("publish_tf")
 
+    # Fault-window timing, measured from the first received /safe_cmd_vel.
+    slip_start_sec = LaunchConfiguration("slip_start_sec")
+    slip_duration_sec = LaunchConfiguration("slip_duration_sec")
+
     return LaunchDescription([
         DeclareLaunchArgument(
             "slip_start_sec",
