@@ -205,8 +205,8 @@ class MockRobotSimulator(Node):
     def _cmd_callback(self, msg: Twist) -> None:
         now = self._now_sec()
 
-       self.cmd_vx = finite_or(msg.linear.x)
-       self.cmd_wz = finite_or(msg.angular.z)
+       self.cmd_vx = finite_or (msg.linear.x)
+       self.cmd_wz = finite_or (msg.angular.z)
        self.last_cmd_time = now
 
        if self.first_cmd_time is None:
