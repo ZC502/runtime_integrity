@@ -390,6 +390,14 @@ class MockRobotSimulator(Node):
                 "linear_vx": vx_for_motion,
                 "angular_wz": wz_for_motion,
             },
+           "faultWindow": {
+               "startSec": self.slip_start_sec,
+               "endSec": self.slip_start_sec + self.slip_duration_sec,
+               "active": (
+                   fault_elapsed is not None
+                   and self.slip_start_sec <= fault_elapsed <= self.slip_start_sec + self.slip_duration_sec
+               ) if self.profile == "wheel_slip" else False,
+          },
         }
 
         msg = String()
