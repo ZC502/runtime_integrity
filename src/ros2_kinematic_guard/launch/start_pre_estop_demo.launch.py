@@ -49,7 +49,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "slip_duration_sec",
-            default_value="20.0",
+            default_value="9999.0",
             description="How long wheel slip lasts.",
         ),
         DeclareLaunchArgument(
