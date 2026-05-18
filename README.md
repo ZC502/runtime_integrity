@@ -104,12 +104,50 @@ Kinematic Guard asks:
 }
 ```
 
+## Repository Layout
+
+This repository is organized as a ROS 2 workspace:
+
+```text
+repo-root/
+├── src/
+│   └── ros2_kinematic_guard/
+│       ├── package.xml
+│       ├── setup.py
+│       ├── launch/
+│       └── ros2_kinematic_guard/
+│           ├── kinematic_guard_node.py
+│           ├── mock_robot_simulator.py
+│           └── narh_lite_core.py
+```
+Run `colcon build` from the repository root, not from inside `src/ros2_kinematic_guard`.
+
 ## Quick Start
 
+This repository is a ROS 2 workspace. Run the following commands from the repository root, the directory that contains `src/`.
+
 ```bash
-cd ros2_kinematic_guard
+# Check that you are at the repository root
+ls src
+
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
+source install/setup.bash
+```
+If you open this repository in GitHub Codespaces, the terminal usually starts at the repository root.
+
+If you cloned it locally:
+```bash
+git clone https://github.com/ZC502/ros2_kinematic_guard.git
+cd ros2_kinematic_guard
+
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+```
+Every new terminal must source the overlay again:
+```bash
+source /opt/ros/humble/setup.bash
 source install/setup.bash
 ```
 
@@ -126,19 +164,32 @@ Runtime parameter tuning is planned. For v0.2, thresholds are configured through
 
 Option A: Observe Mode — passive, no intervention
 ```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
 ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py profile:=wheel_slip mode:=observe
 ```
 Option B: Guard Mode — active clamp / brake / resync
 ```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
 ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py profile:=wheel_slip mode:=guard
 ```
 
 Terminal 2:
 ```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
 ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.8}, angular: {z: 0.0}}"
 ```
+
 Terminal 3:
 ```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
 ros2 topic echo /kinematic_guard/status
 ```
 The robot was still receiving valid velocity commands, but its odometry no longer matched the commanded motion.
@@ -154,6 +205,9 @@ data: '{"timestamp": ... }'
 ```
 For a clean, human-readable JSON view, use:
 ```
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
 ros2 topic echo /kinematic_guard/status --field data --once --full-length \
 | awk '/^---$/{exit} {print}' \
 | python3 -m json.tool
