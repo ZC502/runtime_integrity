@@ -154,7 +154,10 @@ class MockRobotSimulator(Node):
         self.actual_wz = 0.0
 
         self.last_cmd_time: Optional[float] = None
+        self.first_cmd_time: Optional[float] = None
+
         self.start_time = self._now_sec()
+        
         self.last_loop_time = self.start_time
         self.jump_done = False
         self.last_fault_state = "NONE"
@@ -200,10 +203,18 @@ class MockRobotSimulator(Node):
     # ============================================================
 
     def _cmd_callback(self, msg: Twist) -> None:
-        self.cmd_vx = finite_or(msg.linear.x)
-        self.cmd_wz = finite_or(msg.angular.z)
-        self.last_cmd_time = self._now_sec()
+        now = self._now_sec()
 
+       self.cmd_vx = finite_or(msg.linear.x)
+       self.cmd_wz = finite_or(msg.angular.z)
+       self.last_cmd_time = now
+
+       if self.first_cmd_time is None:
+           self.first_cmd_time = now
+           self.get_logger().info(
+               "[MOCK_ROBOT] First /safe_cmd_vel received. Fault timer starts now."
+           )
+          
     # ============================================================
     # Simulation
     # ============================================================
@@ -214,6 +225,11 @@ class MockRobotSimulator(Node):
         self.last_loop_time = now
 
         elapsed = now - self.start_time
+        if self.first_cmd_time is None:
+            fault_elapsed = None
+        else:
+            fault_elapsed = now - self.first_cmd_time
+       
 
         # If command is stale, the mock robot's internal driver stops.
         if self.last_cmd_time is None or (now - self.last_cmd_time) > self.cmd_timeout:
@@ -245,13 +261,20 @@ class MockRobotSimulator(Node):
         lateral_drift = 0.0
 
         if self.profile == "wheel_slip":
-            if self.slip_start_sec <= elapsed <= self.slip_start_sec + self.slip_duration_sec:
+            if (
+                fault_elapsed is not None
+                and self.slip_start_sec <= fault_elapsed <= self.slip_start_sec + self.slip_duration_sec
+            ):
                 fault_state = "WHEEL_SLIP"
                 vx_for_motion = self.actual_vx * self.slip_ratio
                 lateral_drift = self.slip_lateral_drift_mps
 
         elif self.profile == "localization_jump":
-            if (not self.jump_done) and elapsed >= self.jump_time_sec:
+            if (
+                fault_elapsed is not None
+                and (not self.jump_done)
+                and fault_elapsed >= self.jump_time_sec
+            ):
                 fault_state = "LOCALIZATION_JUMP"
                 self.x += self.jump_distance_m * math.cos(self.yaw)
                 self.y += self.jump_distance_m * math.sin(self.yaw)
@@ -342,10 +365,15 @@ class MockRobotSimulator(Node):
         vx_for_motion: float,
         wz_for_motion: float,
     ) -> None:
+        fault_elapsed = None
+        if self.first_cmd_time is not None:
+            fault_elapsed = now - self.first_cmd_time
+
         payload = {
             "timestamp": now,
             "profile": self.profile,
             "elapsedSec": elapsed,
+            "faultElapsedSec": fault_elapsed,
             "faultState": fault_state,
             "pose": {
                 "x": self.x,
