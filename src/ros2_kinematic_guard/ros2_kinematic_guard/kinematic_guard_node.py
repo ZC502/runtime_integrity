@@ -967,6 +967,7 @@ class KinematicGuardNode(Node):
     ) -> None:
         status = override_status or result.status.value
         computed_action = override_action or result.action.value
+        
         if status in {"GREEN", "RECOVERED"} and float(result.r_nar) < self.core.cfg.yellow_threshold:
             dominant_cause = "NONE"
         
