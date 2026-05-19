@@ -153,7 +153,7 @@ This demo runs a lightweight virtual AMR/AGV without Gazebo or Isaac Sim.
 
 It creates this closed loop:
 
-```text
+~~~text
 /cmd_vel
    ↓
 Kinematic Guard
@@ -165,32 +165,193 @@ Mock Robot
 /odom
    ↑
 Kinematic Guard
-```
+~~~
 
 The mock robot injects a wheel-slip fault after it receives the first non-zero `/safe_cmd_vel`.
 
-To make the demo easy to observe, the command below keeps the wheel-slip window open for a long time:
-```
-slip_duration_sec:=9999.0
-```
-**Deployment Modes**
+There are two recommended demo modes:
+
+- **Demo A: Lifecycle Demo** — shows `GREEN → RESYNCING` and then returns to a healthy window after the slip ends.
+- **Demo B: Persistent Fault Debug Demo** — keeps wheel slip active for a long time so you do not miss the fault window.
+
+For the first community-facing demo, use **Demo A**.
+
+---
+
+### Deployment Modes
+
 - `mode:=observe` — passive monitoring only. No control intervention.
 - `mode:=passthrough` — inline wiring test. `/safe_cmd_vel` equals `/cmd_vel`.
 - `mode:=guard` — active mode. Can clamp velocity or enter `BRAKE_AND_RESYNC`.
 
-**Terminal 0: Clean old demo processes**
+---
+
+### Terminal 0: Clean old demo processes
 
 Before switching between `observe` and `guard`, stop old nodes:
-```Bash
+
+~~~bash
 pkill -f kinematic_guard_node || true
 pkill -f mock_robot_simulator || true
 pkill -f "ros2 topic pub" || true
 ros2 daemon stop
 ros2 daemon start
-```
+~~~
 
-**Terminal 1A: Observe Mode — passive, no intervention**
-```Bash
+You can also check that there is only one `/odom` publisher:
+
+~~~bash
+ros2 topic info /odom -v
+~~~
+
+There should be only one `/odom` publisher from `mock_robot`.
+
+---
+
+## Demo A: Lifecycle Demo
+
+This is the recommended demo for first-time users.
+
+It gives you 10 seconds to open the monitoring terminals before wheel slip begins, then injects wheel slip for 12 seconds.
+
+Expected story:
+
+~~~text
+healthy motion
+    ↓
+GREEN
+    ↓
+wheel slip starts
+    ↓
+RESYNCING
+    ↓
+wheel slip ends
+    ↓
+healthy window again
+~~~
+
+---
+
+### Terminal 1A: Observe Mode — passive, no intervention
+
+Use this first. It lets you see the Guard detect the failure without changing the command stream.
+
+~~~bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py \
+  profile:=wheel_slip \
+  mode:=observe \
+  slip_start_sec:=10.0 \
+  slip_duration_sec:=12.0
+~~~
+
+In this mode, the Guard reports the failure but does not modify the command stream.
+
+---
+
+### Terminal 1B: Guard Mode — active clamp / brake / resync
+
+Use this instead of Terminal 1A when you want to see `/safe_cmd_vel` being clamped or set to zero.
+
+~~~bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py \
+  profile:=wheel_slip \
+  mode:=guard \
+  slip_start_sec:=10.0 \
+  slip_duration_sec:=12.0
+~~~
+
+---
+
+### Terminal 2: Prepare Kinematic Guard status monitor
+
+Start this before publishing `/cmd_vel`.
+
+~~~bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+watch -n 0.2 'ros2 topic echo /kinematic_guard/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
+~~~
+
+---
+
+### Terminal 3: Prepare mock robot status monitor
+
+This confirms whether the virtual robot is currently slipping.
+
+~~~bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+watch -n 0.2 'ros2 topic echo /mock_robot/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
+~~~
+
+Wait for:
+
+~~~json
+{
+  "profile": "wheel_slip",
+  "faultState": "WHEEL_SLIP"
+}
+~~~
+
+If you see:
+
+~~~json
+{
+  "faultState": "NONE"
+}
+~~~
+
+then the robot is currently in a healthy window, and `/kinematic_guard/status` may correctly remain `GREEN`.
+
+---
+
+### Terminal 4: Publish a smooth velocity command
+
+Start this after the monitors are ready.
+
+~~~bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.8}, angular: {z: 0.0}}"
+~~~
+
+---
+
+### Terminal 5: Watch the actual command sent to the base
+
+This is especially useful in `mode:=guard`.
+
+~~~bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+ros2 topic echo /safe_cmd_vel
+~~~
+
+---
+
+## Demo B: Persistent Fault Debug Demo
+
+Use this when you want a long fault window and do not want to miss the slip event.
+
+This mode keeps wheel slip active for a long time:
+
+~~~text
+slip_duration_sec:=9999.0
+~~~
+
+Observe mode:
+
+~~~bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
@@ -199,13 +360,11 @@ ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py \
   mode:=observe \
   slip_start_sec:=3.0 \
   slip_duration_sec:=9999.0
-```
-In this mode, the Guard reports the failure but does not modify the command stream.
+~~~
 
-**Terminal 1B: Guard Mode — active clamp / brake / resync**
+Guard mode:
 
-Use this instead of Terminal 1A when you want to see /safe_cmd_vel being clamped or set to zero:
-```Bash
+~~~bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
@@ -214,62 +373,21 @@ ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py \
   mode:=guard \
   slip_start_sec:=3.0 \
   slip_duration_sec:=9999.0
-```
+~~~
 
-**Terminal 2: Publish a smooth velocity command**
-```Bash
-source /opt/ros/humble/setup.bash
-source install/setup.bash
+This is useful for debugging, screenshots, and stress testing.
 
-ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.8}, angular: {z: 0.0}}"
-```
+Because the fault persists for a long time, the system may stay in `RESYNCING` until the demo is restarted or the fault window ends.
 
-**Terminal 3: Verify that the mock robot is actually slipping**
+---
 
-Do this first. The Guard can only detect wheel slip if the mock robot is currently injecting it.
-```Bash
-source /opt/ros/humble/setup.bash
-source install/setup.bash
+## Expected Behavior
 
-watch -n 0.2 'ros2 topic echo /mock_robot/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
-```
-Wait until you see:
-```JSON
-{
-  "profile": "wheel_slip",
-  "faultState": "WHEEL_SLIP"
-}
-```
-If you see:
-```JSON
-{
-  "faultState": "NONE"
-}
-```
-then you are outside the fault window, and `/kinematic_guard/status` may correctly remain `GREEN`.
-
-**Terminal 4: Watch Kinematic Guard status**
-```Bash
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-watch -n 0.2 'ros2 topic echo /kinematic_guard/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
-```
-
-**Terminal 5: Watch the actual command sent to the base**
-```Bash
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-ros2 topic echo /safe_cmd_vel
-```
-
-### Expected Behavior
-
-**Healthy window**
+### Healthy window
 
 When `/cmd_vel` and `/odom` agree, the Guard should stay quiet:
-```JSON
+
+~~~json
 {
   "status": "GREEN",
   "residual": 0.0009,
@@ -281,15 +399,19 @@ When `/cmd_vel` and `/odom` agree, the Guard should stay quiet:
     "angular_wz": 0.0
   }
 }
-```
+~~~
+
 This is normal and desirable. It shows that Kinematic Guard does not create false positives when the robot motion matches the command stream.
 
-**Wheel-slip window in observe mode**
+---
+
+### Wheel-slip window in observe mode
 
 When `/mock_robot/status` shows `faultState=WHEEL_SLIP`, Kinematic Guard should report that command-feedback integrity is broken.
 
 In `mode:=observe`, the Guard reports the failure but does not modify the command stream:
-```JSON
+
+~~~json
 {
   "status": "RESYNCING",
   "causalAlignment": "BROKEN",
@@ -302,12 +424,15 @@ In `mode:=observe`, the Guard reports the failure but does not modify the comman
     "angular_wz": 0.0
   }
 }
-```
+~~~
 
-**Wheel-slip window in guard mode**
+---
+
+### Wheel-slip window in guard mode
 
 In `mode:=guard`, the Guard can clamp or brake the command stream:
-```JSON
+
+~~~json
 {
   "status": "RESYNCING",
   "causalAlignment": "BROKEN",
@@ -320,39 +445,97 @@ In `mode:=guard`, the Guard can clamp or brake the command stream:
     "angular_wz": 0.0
   }
 }
-```
+~~~
+
 At the same time, `/safe_cmd_vel` should show the clamped or zero command.
 
-**Troubleshooting**
+---
 
-**I only see `GREEN`**
+## Pretty-print KinematicStatus JSON
+
+`/kinematic_guard/status` is published as `std_msgs/String`, so a raw ROS 2 echo looks like this:
+
+~~~text
+data: '{"timestamp": ... }'
+---
+~~~
+
+For a clean, human-readable JSON view, use:
+
+~~~bash
+ros2 topic echo /kinematic_guard/status --field data --once --full-length \
+| awk '/^---$/{exit} {print}' \
+| python3 -m json.tool
+~~~
+
+For continuous monitoring:
+
+~~~bash
+watch -n 0.2 'ros2 topic echo /kinematic_guard/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
+~~~
+
+To save one status sample:
+
+~~~bash
+ros2 topic echo /kinematic_guard/status --field data --once --full-length \
+| awk '/^---$/{exit} {print}' \
+| python3 -m json.tool \
+> kinematic_status_example.json
+~~~
+
+---
+
+## Troubleshooting
+
+### I only see `GREEN`
 
 First check the mock robot:
-```Bash
+
+~~~bash
 ros2 topic echo /mock_robot/status --field data --once --full-length \
 | awk '/^---$/{exit} {print}' \
 | python3 -m json.tool
-```
+~~~
+
 If `faultState` is `NONE`, then the robot is not currently slipping. This is a healthy window.
 
 If `faultState` is `WHEEL_SLIP` but Kinematic Guard still stays `GREEN`, check for duplicate `/odom` publishers:
-```Bash
+
+~~~bash
 ros2 topic info /odom -v
-```
+~~~
+
 There should be only one `/odom` publisher from `mock_robot`.
 
-**I see `LOCALIZATION_JUMP` during the wheel-slip demo**
+---
+
+### I see `LOCALIZATION_JUMP` during the wheel-slip demo
 
 This usually means there are multiple `/odom` publishers or old demo nodes still running.
 
 Clean old processes:
-```Bash
+
+~~~bash
 pkill -f kinematic_guard_node || true
 pkill -f mock_robot_simulator || true
 pkill -f "ros2 topic pub" || true
 ros2 daemon stop
 ros2 daemon start
-```
+~~~
+
+---
+
+### In guard mode, the system stays in `RESYNCING`
+
+This can happen if the command publisher keeps sending a forward command while the Guard is braking.
+
+Stop the `/cmd_vel` publisher, or publish zero velocity:
+
+~~~bash
+ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0}, angular: {z: 0.0}}"
+~~~
+
+Then watch for clean windows and recovery.
 
 ## Optional Demo: Localization Jump
 
