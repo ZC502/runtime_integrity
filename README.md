@@ -100,6 +100,37 @@ Kinematic Guard asks:
 }
 ```
 
+## Use the Best Available Odometry
+
+Kinematic Guard does not require raw wheel odometry.
+
+For real AMR/AGV deployments, it is usually better to feed the guard with the most trusted odometry source available:
+- `/odom`
+- `/odometry/filtered`
+- `/fusion/odom`
+- visual-inertial odometry
+- GNSS / IMU / encoder fused odometry
+
+This reduces false positives.
+
+Kinematic Guard is not a sensor-fusion stack. It does not decide what the robot’s state estimate should be.
+
+Instead, it asks:
+```text
+Given the best available odometry, does the robot’s measured motion still match the command stream?
+```
+Example:
+```Bash
+ros2 run ros2_kinematic_guard kinematic_guard_node --ros-args \
+  -p cmd_input_topic:=/cmd_vel \
+  -p odom_topic:=/fusion/odom \
+  -p cmd_output_topic:=/safe_cmd_vel \
+  -p mode:=observe
+```
+If you already use `robot_localization`, FusionCore, or another state-estimation pipeline, Kinematic Guard should consume that fused odometry output rather than raw encoder-only odometry whenever possible.
+A cleaner odometry signal makes the command/feedback residual cleaner and reduces false positives.
+复制
+
 ## Repository Layout
 
 This repository is organized as a ROS 2 workspace:
