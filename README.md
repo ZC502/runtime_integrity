@@ -1,91 +1,40 @@
-# ros2_kinematic_guard
+# runtime_integrity
 
-## A pre-E-stop guard for ROS 2 AMR/AGV systems
+### Runtime Accountability & Execution Integrity Middleware for Autonomous Mobile Robots
 
-`ros2_kinematic_guard` monitors `/cmd_vel` and `/odom` to detect when a mobile robot’s physical response no longer matches the command stream.
+In regulated autonomous systems, **“Why did the robot do that?”** is no longer only a debugging question. It is becoming an operational, safety, and compliance requirement.
 
-Before the robot escalates into shaking, spinning, collision risk, or hard E-stop, Kinematic Guard can slow down, brake, and resync locally. It is designed for common AMR/AGV failure modes:
+`runtime_integrity` is a middleware layer that monitors the relationship between autonomous commands and physical execution.
 
-- wheel slip on wet or oily floors
-- wheel-speed / odometry mismatch
-- localization jumps from lidar / SLAM glitches
-- bad Wi-Fi / 5G command bursts
-- stale or replayed command windows
-- robot shaking, spinning, or over-correcting before safety lidar cuts power
-
-## Why Pre-E-stop Detection Matters
-
-Safety-rated E-stop systems are the final protection layer. Kinematic Guard does not replace them.
-
-It tries to detect execution collapse earlier, before the certified safety layer is forced to intervene.
-
-Frequent hard stops may contribute to:
-
-- manual recovery time
-- production interruption
-- payload instability
-- mechanical stress on wheels, reducers, and brakes
-- unclear root cause during post-incident debugging
-
-## Why Traditional Methods Fail (Why Not Just A Timeout?)
-
-Most ROS 2 mobile robots rely on a basic `cmd_vel_timeout` node. If no command arrives within 0.5s, it publishes 0 to the base driver. 
-
-Timeouts are necessary, but they answer only one question:
-```text
-Did a command arrive recently?
-```
-They do not answer:
-
-**Does the robot’s measured motion still match the command stream?**
-
-- **The "Ostrich Strategy" & Hard E-Stop Escalation:**
-   When a robot spins out due to wheel slip or localization jumps, the controller continues to over-correct, sending aggressive commands. Currently, the industry relies on a crude fallback: let the robot shake, spin, or crash until the physical 
-**Safety LIDAR / Hardware E-stop**
- triggers a hard cut.
-- **The "Ghost Commands" Burst (Wi-Fi Jitter):**
-   A standard timeout only protects against 
-*silence*. It cannot handle network jitter. When a robot passes a Wi-Fi blind spot or roaming AP, the network layers buffer the commands. The moment connectivity recovers, 20 frames of queued `/cmd_vel`
- are injected into the base driver within 5 milliseconds like a machine gun. The robot experiences a violent acceleration burst ("Ghost Commands") before the timeout can even react.
-
-### The Hidden Cost of Frequent Hard E-Stops:
-
-Depending on the platform and payload, frequent hard stops may contribute to:
-- **Mechanical Trauma:**
- A heavy AMR stopping instantly from full speed experiences massive inertial shock, causing gear striping (减速机打齿), shaft deformation, and wheel wear.
-- **Electrical Back-EMF:**
- Sudden hard braking generates massive regenerative voltage spikes, risking damage to servo drive buses or BMS protection boards.
-- **Production Downtime:**
- A locked E-stop requires a field engineer to walk onto the manufacturing line, manually reset the chassis with a joystick, and clear faults. It halts production and costs real money.
-
-`ros2_kinematic_guard` bridges this gap. It acts as a **Pre-E-stop sanity layer**, letting the robot locally slow down, brake, and resync *before*
- the hardware safety layer is forced to intervene.
-
-## Zero-code modification
-
-Kinematic Guard works as an inline ROS 2 topic filter.
-
-You do not need to modify Nav2, behavior trees, planners, controllers, or proprietary base drivers.
+It helps answer:
 
 ```text
-Nav2 / teleop / planner
-        ↓
-      /cmd_vel
-        ↓
-Kinematic Guard
-        ↓
-  /safe_cmd_vel
-        ↓
-base driver
+What did the autonomy stack command?
+What did the robot actually do?
+Was the command still physically consistent?
+Was any intervention or downgrade triggered?
+Can this event be explained later to an operator, safety officer, or auditor?
 ```
 
-## Core question
-Traditional timeout checks ask:
-**Did a command arrive recently?**
-Kinematic Guard asks:
-**Is the robot still moving according to the command it was just given?**
+The project was formerly known as `ros2_kinematic_guard`.
 
-## Main KinematicStatus Output
+---
+
+### What runtime_integrity Does
+
+`runtime_integrity` observes command streams and physical feedback over short runtime windows.
+
+When the robot’s measured motion no longer matches the command stream, it emits structured execution-integrity evidence.
+
+Typical outputs include:
+- execution state
+- residual score
+- dominant cause
+- intervention recommendation
+- safe command output
+- audit-ready event data
+
+Example:
 ```JSON
 {
   "status": "RESYNCING",
@@ -100,58 +49,257 @@ Kinematic Guard asks:
 }
 ```
 
-## Use the Best Available Odometry
+---
 
-Kinematic Guard does not require raw wheel odometry.
+### Compliance Readiness
 
-For real AMR/AGV deployments, it is usually better to feed the guard with the most trusted odometry source available:
+`runtime_integrity` is designed to support manufacturers and integrators preparing for runtime accountability, technical logging, and human oversight requirements.
+
+It can support evidence workflows related to:
+- runtime audit logging
+- intervention evidence
+- human oversight dashboards
+- post-incident reconstruction
+- fleet-level operational monitoring
+- structured event export for external audit systems
+
+**Compliance-Oriented Capabilities**
+
+| Capability            | Purpose                                                                                    |
+| --------------------- | ------------------------------------------------------------------------------------------ |
+| Runtime Audit         | Tracks whether command streams remain physically consistent with robot motion.             |
+| Intervention Evidence | Records when a command is downgraded, clamped, or flagged for resync.                      |
+| Human Oversight Hooks | Provides structured runtime signals for HMI, FMS, or operator dashboards.                  |
+| Audit Event Output    | Emits machine-readable JSON events for logging, SIEM, audit databases, or fleet analytics. |
+| Cause Classification  | Labels events such as `WHEEL_SLIP`, `LOCALIZATION_JUMP`, `TIMING`, or `CMD_ODOM_MISMATCH`. |
+
+`runtime_integrity` is **not a compliance product by itself**. It provides runtime evidence that can be integrated into a broader compliance, safety, and quality-management system.
+
+---
+
+### Human Oversight Workflow
+
+A typical deployment can look like this:
+```
+[ Autonomy / Navigation Stack ]
+        │
+        ▼
+Generates command stream
+        │
+        ▼
+[ runtime_integrity ]
+Monitors command-to-feedback consistency
+        │
+        ▼
+Execution anomaly detected
+        │
+        ▼
+Structured causal event emitted
+        │
+        ▼
+[ HMI / FMS / Audit Gateway ]
+Maps event to operator-facing alert
+        │
+        ▼
+[ Human Decision Loop ]
+Operator can acknowledge, override, pause, resume, inspect, or escalate
+```
+`runtime_integrity` does not prescribe a universal HMI. Industrial HMI and Fleet Management System architectures are fragmented across vendors.
+
+Instead, the project exposes structured status and event streams that can be mapped into custom HMI, FMS, PLC, SIEM, or audit workflows.
+
+---
+
+### Operational Context & Scenarios
+
+`runtime_integrity` is intended for mobile robots operating in physically uncertain environments where command execution can diverge from system intent.
+
+Example scenarios:
+- **AMR traction loss**
+Micro-slip or severe slip on polished, wet, dusty, or oily floors.
+- **Localization inconsistency**
+Sudden pose or odometry jumps after SLAM relocalization, lidar mismatch, Wi-Fi roaming recovery, or sensor dropouts.
+- **GNSS / outdoor logistics drift**
+Mismatch between commanded paths and fused GNSS / IMU / encoder odometry in outdoor logistics corridors.
+- **Autonomous planner divergence**
+High-level autonomy continues issuing commands while measured robot motion no longer matches expected physical behavior.
+- **Mixed-fleet accountability**
+Structured execution-integrity evidence can be aggregated across robot types, vendors, and fleet-management systems.
+
+---
+
+### What runtime_integrity Is NOT
+
+`runtime_integrity` is not:
+
+- a safety-rated PLC
+- a certified collision-avoidance system
+- a replacement for hardware E-stops
+- a replacement for safety laser scanners
+- a full sensor-fusion stack
+- a path planner
+- a motion controller
+- a legal compliance guarantee
+
+It is a **runtime execution-integrity and accountability layer** designed to observe, explain, and record command-to-physical-execution divergence.
+
+Certified functional safety systems remain mandatory where required.
+
+---
+
+### Deployment Model
+
+`runtime_integrity` can operate as an inline middleware component.
+```
+Navigation / Teleop / Planner
+        ↓
+      /cmd_vel
+        ↓
+runtime_integrity
+        ↓
+  /safe_cmd_vel
+        ↓
+Base Driver
+```
+This provides a low-friction deployment path:
+- no modification to Nav2
+- no modification to behavior trees
+- no modification to existing planners
+- no modification to proprietary base drivers
+- can start in passive observe mode
+- can later be connected to custom HMI / fleet dashboards
+
+---
+
+### Core Question
+
+Traditional timeout checks ask:
+```
+Did a command arrive recently?
+```
+`runtime_integrity` asks:
+
+**Is the robot still moving according to the command it was just given?**
+
+This distinction matters because a robot can continue receiving commands while physical execution has already become inconsistent.
+
+Examples:
+- wheels are spinning but the robot is not moving as expected
+- localization jumps while commands continue
+- stale or bursty commands arrive after network recovery
+- odometry diverges from commanded motion
+- the system begins over-correcting before hardware safety layers intervene
+
+---
+
+### Planned Enterprise Audit Event Schema
+
+The current runtime status stream already exposes execution-integrity evidence.
+
+A future enterprise audit event schema may include:
+```JSON
+{
+  "timestamp": "2026-05-22T11:04:23.194Z",
+  "audit_event_id": "evt-2026-00014",
+  "robot_id": "amr-fleet-04",
+  "source_id": "runtime_integrity_node_01",
+
+  "status": "RESYNCING",
+  "dominantCause": "WHEEL_SLIP",
+  "residual": 5.39,
+  "guardAction": "BRAKE_AND_RESYNC",
+
+  "interventionRequired": true,
+
+  "inputCommand": {
+    "topic": "/cmd_vel",
+    "linear_vx": 0.8,
+    "angular_wz": 0.0
+  },
+
+  "outputCommand": {
+    "topic": "/safe_cmd_vel",
+    "linear_vx": 0.0,
+    "angular_wz": 0.0
+  },
+
+  "stateSource": {
+    "topic": "/fusion/odom",
+    "type": "nav_msgs/Odometry"
+  },
+
+  "complianceTags": [
+    "human_oversight",
+    "runtime_intervention",
+    "execution_integrity_audit"
+  ]
+}
+```
+These fields are intended for integration with external audit sinks, fleet-management systems, signed evidence chains, SIEM systems, or compliance reporting pipelines.
+
+---
+
+### Use the Best Available Odometry
+
+`runtime_integrity` does not require raw wheel odometry.
+
+For real AMR/AGV deployments, it is usually better to feed the system with the most trusted odometry source available:
 - `/odom`
 - `/odometry/filtered`
 - `/fusion/odom`
 - visual-inertial odometry
 - GNSS / IMU / encoder fused odometry
 
-This reduces false positives.
-
-Kinematic Guard is not a sensor-fusion stack. It does not decide what the robot’s state estimate should be.
+`runtime_integrity` is not a sensor-fusion stack. It does not decide what the robot’s state estimate should be.
 
 Instead, it asks:
-```text
-Given the best available odometry, does the robot’s measured motion still match the command stream?
-```
+
+**Given the best available odometry, does the robot’s measured motion still match the command stream?**
+
 Example:
-```Bash
-ros2 run ros2_kinematic_guard kinematic_guard_node --ros-args \
+```BASH
+ros2 run runtime_integrity kinematic_guard_node --ros-args \
   -p cmd_input_topic:=/cmd_vel \
   -p odom_topic:=/fusion/odom \
   -p cmd_output_topic:=/safe_cmd_vel \
   -p mode:=observe
 ```
-If you already use `robot_localization`, FusionCore, or another state-estimation pipeline, Kinematic Guard should consume that fused odometry output rather than raw encoder-only odometry whenever possible.
-A cleaner odometry signal makes the command/feedback residual cleaner and reduces false positives.
-复制
+If you already use `robot_localization`, FusionCore, or another state-estimation pipeline, `runtime_integrity` should consume that fused odometry output rather than raw encoder-only odometry whenever possible.
 
-## Repository Layout
+A cleaner odometry signal can reduce false positives and improve the quality of execution-integrity decisions.
+
+---
+
+**Current ROS 2 Demo**
+
+The current open-source demo is ROS 2 based.
+
+It demonstrates the core concept using a lightweight virtual AMR/AGV, without Gazebo, Isaac Sim, or real hardware.
+
+---
+
+### Repository Layout
 
 This repository is organized as a ROS 2 workspace:
-
-```text
+```
 repo-root/
 ├── src/
-│   └── ros2_kinematic_guard/
+│   └── runtime_integrity/
 │       ├── package.xml
 │       ├── setup.py
 │       ├── launch/
-│       └── ros2_kinematic_guard/
+│       └── runtime_integrity/
 │           ├── kinematic_guard_node.py
 │           ├── mock_robot_simulator.py
 │           └── narh_lite_core.py
 ```
-Run `colcon build` from the repository root, not from inside `src/ros2_kinematic_guard`.
+Run `colcon build` from the repository root, not from inside `src/runtime_integrity`.
+
+---
 
 ## Quick Start
 
-This repository is a ROS 2 workspace. Run the following commands from the repository root, the directory that contains `src/`.
+Run the following commands from the repository root, the directory that contains `src/`.
 
 ```bash
 # Check that you are at the repository root
@@ -165,8 +313,8 @@ If you open this repository in GitHub Codespaces, the terminal usually starts at
 
 If you cloned it locally:
 ```bash
-git clone https://github.com/ZC502/ros2_kinematic_guard.git
-cd ros2_kinematic_guard
+git clone https://github.com/ZC502/runtime_integrity.git
+cd runtime_integrity
 
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
@@ -177,17 +325,16 @@ Every new terminal must source the overlay again:
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ```
+---
 
 ## 5-minute Demo: Wheel Slip Before Hard E-stop
 
-This demo runs a lightweight virtual AMR/AGV without Gazebo or Isaac Sim.
+This demo creates the following closed loop:
 
-It creates this closed loop:
-
-~~~text
+```text
 /cmd_vel
    ↓
-Kinematic Guard
+runtime integrity
    ↓
 /safe_cmd_vel
    ↓
@@ -195,8 +342,8 @@ Mock Robot
    ↓
 /odom
    ↑
-Kinematic Guard
-~~~
+runtime integrity
+```
 
 The mock robot injects a wheel-slip fault after it receives the first non-zero `/safe_cmd_vel`.
 
@@ -221,19 +368,19 @@ For the first community-facing demo, use **Demo A**.
 
 Before switching between `observe` and `guard`, stop old nodes:
 
-~~~bash
+```bash
 pkill -f kinematic_guard_node || true
 pkill -f mock_robot_simulator || true
 pkill -f "ros2 topic pub" || true
 ros2 daemon stop
 ros2 daemon start
-~~~
+```
 
 You can also check that there is only one `/odom` publisher:
 
-~~~bash
+```bash
 ros2 topic info /odom -v
-~~~
+```
 
 There should be only one `/odom` publisher from `mock_robot`.
 
@@ -247,7 +394,7 @@ It gives you 10 seconds to open the monitoring terminals before wheel slip begin
 
 Expected story:
 
-~~~text
+```text
 healthy motion
     ↓
 GREEN
@@ -259,7 +406,7 @@ RESYNCING
 wheel slip ends
     ↓
 healthy window again
-~~~
+```
 
 ---
 
@@ -267,18 +414,16 @@ healthy window again
 
 Use this first. It lets you see the Guard detect the failure without changing the command stream.
 
-~~~bash
+```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
-ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py \
+ros2 launch runtime_integrity start_pre_estop_demo.launch.py \
   profile:=wheel_slip \
   mode:=observe \
   slip_start_sec:=10.0 \
   slip_duration_sec:=12.0
-~~~
-
-In this mode, the Guard reports the failure but does not modify the command stream.
+```
 
 ---
 
@@ -286,29 +431,29 @@ In this mode, the Guard reports the failure but does not modify the command stre
 
 Use this instead of Terminal 1A when you want to see `/safe_cmd_vel` being clamped or set to zero.
 
-~~~bash
+```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
-ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py \
+ros2 launch runtime_integrity start_pre_estop_demo.launch.py \
   profile:=wheel_slip \
   mode:=guard \
   slip_start_sec:=10.0 \
   slip_duration_sec:=12.0
-~~~
+```
 
 ---
 
-### Terminal 2: Prepare Kinematic Guard status monitor
+### Terminal 2: Prepare runtime integrity status monitor
 
 Start this before publishing `/cmd_vel`.
 
-~~~bash
+```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
 watch -n 0.2 'ros2 topic echo /kinematic_guard/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
-~~~
+```
 
 ---
 
@@ -316,29 +461,29 @@ watch -n 0.2 'ros2 topic echo /kinematic_guard/status --field data --once --full
 
 This confirms whether the virtual robot is currently slipping.
 
-~~~bash
+```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
 watch -n 0.2 'ros2 topic echo /mock_robot/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
-~~~
+```
 
 Wait for:
 
-~~~json
+```json
 {
   "profile": "wheel_slip",
   "faultState": "WHEEL_SLIP"
 }
-~~~
+```
 
 If you see:
 
-~~~json
+```json
 {
   "faultState": "NONE"
 }
-~~~
+```
 
 then the robot is currently in a healthy window, and `/kinematic_guard/status` may correctly remain `GREEN`.
 
@@ -348,12 +493,12 @@ then the robot is currently in a healthy window, and `/kinematic_guard/status` m
 
 Start this after the monitors are ready.
 
-~~~bash
+```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
 ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.8}, angular: {z: 0.0}}"
-~~~
+```
 
 ---
 
@@ -361,12 +506,12 @@ ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.8}, angula
 
 This is especially useful in `mode:=guard`.
 
-~~~bash
+```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
 ros2 topic echo /safe_cmd_vel
-~~~
+```
 
 ---
 
@@ -374,37 +519,31 @@ ros2 topic echo /safe_cmd_vel
 
 Use this when you want a long fault window and do not want to miss the slip event.
 
-This mode keeps wheel slip active for a long time:
-
-~~~text
-slip_duration_sec:=9999.0
-~~~
-
 Observe mode:
 
-~~~bash
+```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
-ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py \
+ros2 launch runtime_integrity start_pre_estop_demo.launch.py \
   profile:=wheel_slip \
   mode:=observe \
   slip_start_sec:=3.0 \
   slip_duration_sec:=9999.0
-~~~
+```
 
 Guard mode:
 
-~~~bash
+```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
-ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py \
+ros2 launch runtime_integrity start_pre_estop_demo.launch.py \
   profile:=wheel_slip \
   mode:=guard \
   slip_start_sec:=3.0 \
   slip_duration_sec:=9999.0
-~~~
+```
 
 This is useful for debugging, screenshots, and stress testing.
 
@@ -418,7 +557,7 @@ Because the fault persists for a long time, the system may stay in `RESYNCING` u
 
 When `/cmd_vel` and `/odom` agree, the Guard should stay quiet:
 
-~~~json
+```json
 {
   "status": "GREEN",
   "residual": 0.0009,
@@ -430,19 +569,19 @@ When `/cmd_vel` and `/odom` agree, the Guard should stay quiet:
     "angular_wz": 0.0
   }
 }
-~~~
+```
 
-This is normal and desirable. It shows that Kinematic Guard does not create false positives when the robot motion matches the command stream.
+This shows that `runtime_integrity` does not create false positives when robot motion matches the command stream.
 
 ---
 
 ### Wheel-slip window in observe mode
 
-When `/mock_robot/status` shows `faultState=WHEEL_SLIP`, Kinematic Guard should report that command-feedback integrity is broken.
+When `/mock_robot/status` shows `faultState=WHEEL_SLIP`, `runtime_integrity` should report that command-feedback integrity is broken.
 
 In `mode:=observe`, the Guard reports the failure but does not modify the command stream:
 
-~~~json
+```json
 {
   "status": "RESYNCING",
   "causalAlignment": "BROKEN",
@@ -455,15 +594,15 @@ In `mode:=observe`, the Guard reports the failure but does not modify the comman
     "angular_wz": 0.0
   }
 }
-~~~
+```
 
 ---
 
 ### Wheel-slip window in guard mode
 
-In `mode:=guard`, the Guard can clamp or brake the command stream:
+In `mode:=guard`, the system can clamp or brake the command stream:
 
-~~~json
+```json
 {
   "status": "RESYNCING",
   "causalAlignment": "BROKEN",
@@ -476,7 +615,7 @@ In `mode:=guard`, the Guard can clamp or brake the command stream:
     "angular_wz": 0.0
   }
 }
-~~~
+```
 
 At the same time, `/safe_cmd_vel` should show the clamped or zero command.
 
@@ -486,33 +625,48 @@ At the same time, `/safe_cmd_vel` should show the clamped or zero command.
 
 `/kinematic_guard/status` is published as `std_msgs/String`, so a raw ROS 2 echo looks like this:
 
-~~~text
+```text
 data: '{"timestamp": ... }'
 ---
-~~~
+```
 
 For a clean, human-readable JSON view, use:
 
-~~~bash
+```bash
 ros2 topic echo /kinematic_guard/status --field data --once --full-length \
 | awk '/^---$/{exit} {print}' \
 | python3 -m json.tool
-~~~
+```
 
 For continuous monitoring:
 
-~~~bash
+```bash
 watch -n 0.2 'ros2 topic echo /kinematic_guard/status --field data --once --full-length | awk "/^---$/{exit} {print}" | python3 -m json.tool'
-~~~
+```
 
 To save one status sample:
 
-~~~bash
+```bash
 ros2 topic echo /kinematic_guard/status --field data --once --full-length \
 | awk '/^---$/{exit} {print}' \
 | python3 -m json.tool \
-> kinematic_status_example.json
-~~~
+> runtime_integrity_status_example.json
+```
+
+---
+
+### Optional Demo: Localization Jump
+```Bash
+ros2 launch runtime_integrity start_pre_estop_demo.launch.py profile:=localization_jump mode:=guard
+```
+Then publish a smooth command:
+```Bash
+ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5}, angular: {z: 0.0}}"
+```
+Expected `dominantCause`:
+```
+LOCALIZATION_JUMP
+```
 
 ---
 
@@ -522,19 +676,19 @@ ros2 topic echo /kinematic_guard/status --field data --once --full-length \
 
 First check the mock robot:
 
-~~~bash
+```bash
 ros2 topic echo /mock_robot/status --field data --once --full-length \
 | awk '/^---$/{exit} {print}' \
 | python3 -m json.tool
-~~~
+```
 
 If `faultState` is `NONE`, then the robot is not currently slipping. This is a healthy window.
 
-If `faultState` is `WHEEL_SLIP` but Kinematic Guard still stays `GREEN`, check for duplicate `/odom` publishers:
+If `faultState` is `WHEEL_SLIP` but `runtime_integrity` still stays `GREEN`, check for duplicate `/odom` publishers:
 
-~~~bash
+```bash
 ros2 topic info /odom -v
-~~~
+```
 
 There should be only one `/odom` publisher from `mock_robot`.
 
@@ -546,13 +700,13 @@ This usually means there are multiple `/odom` publishers or old demo nodes still
 
 Clean old processes:
 
-~~~bash
+```bash
 pkill -f kinematic_guard_node || true
 pkill -f mock_robot_simulator || true
 pkill -f "ros2 topic pub" || true
 ros2 daemon stop
 ros2 daemon start
-~~~
+```
 
 ---
 
@@ -562,36 +716,16 @@ This can happen if the command publisher keeps sending a forward command while t
 
 Stop the `/cmd_vel` publisher, or publish zero velocity:
 
-~~~bash
+```bash
 ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0}, angular: {z: 0.0}}"
-~~~
+```
 
 Then watch for clean windows and recovery.
 
-## Optional Demo: Localization Jump
+---
 
-```bash
-ros2 launch ros2_kinematic_guard start_pre_estop_demo.launch.py profile:=localization_jump mode:=guard
-```
+### Internal Residual Engine
 
-Then publish a smooth command:
-```bash
-ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5}, angular: {z: 0.0}}"
-```
-Expected `dominantCause`:
-```
-LOCALIZATION_JUMP
-```
+`runtime_integrity` uses an internal residual engine to compare recent command streams with measured robot motion over short time windows.
 
-## What is NARH-lite?
-
-NARH-lite is the lightweight residual engine used inside Kinematic Guard.
-
-It compares the recent command stream with odometry feedback over a sliding time window and asks:
-
-```text
-Did the robot move in a way that is still consistent with the command it just received?
-```
-In this package, NARH-lite is used only as an engineering metric for runtime command-feedback consistency.
-
-It does not replace safety-rated E-stop systems, certified safety controllers, or hardware safety layers.
+The implementation details are intentionally abstracted at the middleware layer. Integrators only need access to the resulting execution-integrity signals and structured audit events.
