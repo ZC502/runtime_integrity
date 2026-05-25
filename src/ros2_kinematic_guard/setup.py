@@ -27,6 +27,7 @@ setup(
             "synthetic_odom_provider = ros2_kinematic_guard.synthetic_odom_provider:main",
             "mock_robot_simulator = ros2_kinematic_guard.mock_robot_simulator:main",
             "command_integrity_reporter_node = ros2_kinematic_guard.reporter_node:main",
+            "execution_observer_node = ros2_kinematic_guard.execution_observer_node:main",
         ],
     },
 )
