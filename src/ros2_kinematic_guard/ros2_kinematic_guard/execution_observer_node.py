@@ -536,63 +536,63 @@ class ExecutionObserverNode(Node):
         elif odom_age is not None and odom_age >= self.data_stale_warn_sec:
             stale.append("odom")
 
-    if not missing and not stale:
-        return None
+        if not missing and not stale:
+            return None
 
-    max_age = max(
-        cmd_age if cmd_age is not None else 0.0,
-        odom_age if odom_age is not None else 0.0,
-    )
+        max_age = max(
+            cmd_age if cmd_age is not None else 0.0,
+            odom_age if odom_age is not None else 0.0,
+        )
 
-    if missing:
-        status = "WAITING_FOR_DATA"
-        cause = "MISSING_STREAM"
-        level_error = False
-    elif max_age >= self.data_stale_error_sec:
-        status = "STALE_DATA_TIMEOUT"
-        cause = "STALE_DATA"
-        level_error = True
-    else:
-        status = "STALE_DATA"
-        cause = "STALE_DATA"
-        level_error = False
+        if missing:
+            status = "WAITING_FOR_DATA"
+            cause = "MISSING_STREAM"
+            level_error = False
+        elif max_age >= self.data_stale_error_sec:
+            status = "STALE_DATA_TIMEOUT"
+            cause = "STALE_DATA"
+            level_error = True
+        else:
+            status = "STALE_DATA"
+            cause = "STALE_DATA"
+            level_error = False
 
-    return {
-        "timestamp": now,
-        "status": status,
-        "engineStatusRaw": status,
-        "dominantCause": cause,
-        "totalResidual": 0.0,
-        "r_nar": 0.0,
-        "causalAlignment": "UNKNOWN",
-        "mode": "observe",
-        "operatorAttentionRequired": level_error,
+        return {
+            "timestamp": now,
+            "status": status,
+            "engineStatusRaw": status,
+            "dominantCause": cause,
+            "totalResidual": 0.0,
+            "r_nar": 0.0,
+            "causalAlignment": "UNKNOWN",
+            "mode": "observe",
+            "operatorAttentionRequired": level_error,
 
-        "wheelSlipIndex": 0.0,
-        "localizationJumpMetric": 0.0,
-        "cmdOdomResidual": 0.0,
-        "timeflowResidual": 0.0,
-        "phaseResidual": 0.0,
-        "staleCommandScore": 0.0,
-        "cmdAccelResidual": 0.0,
-        "cmdJerkResidual": 0.0,
-        "cmdArrivalJitterMs": self.cmd_arrival_jitter_ms,
-        "odomArrivalJitterMs": self.odom_arrival_jitter_ms,
+            "wheelSlipIndex": 0.0,
+            "localizationJumpMetric": 0.0,
+            "cmdOdomResidual": 0.0,
+            "timeflowResidual": 0.0,
+            "phaseResidual": 0.0,
+            "staleCommandScore": 0.0,
+            "cmdAccelResidual": 0.0,
+            "cmdJerkResidual": 0.0,
+            "cmdArrivalJitterMs": self.cmd_arrival_jitter_ms,
+            "odomArrivalJitterMs": self.odom_arrival_jitter_ms,
 
-        "cmdAgeSec": -1.0 if cmd_age is None else cmd_age,
-        "odomAgeSec": -1.0 if odom_age is None else odom_age,
+            "cmdAgeSec": -1.0 if cmd_age is None else cmd_age,
+            "odomAgeSec": -1.0 if odom_age is None else odom_age,
 
-        "cmdTopic": self.cmd_input_topic,
-        "odomTopic": self.odom_topic,
-        "lookbackWindowMs": self.lookback_window_ms,
+            "cmdTopic": self.cmd_input_topic,
+            "odomTopic": self.odom_topic,
+            "lookbackWindowMs": self.lookback_window_ms,
 
-        "cmdBufferSize": len(self.cmd_history),
-        "odomBufferSize": len(self.odom_history),
+            "cmdBufferSize": len(self.cmd_history),
+            "odomBufferSize": len(self.odom_history),
 
-        "statsCmdReceived": int(self.stats["cmd_received"]),
-        "statsOdomReceived": int(self.stats["odom_received"]),
-        "statsEvaluations": int(self.stats["evaluations"]),
-    }
+            "statsCmdReceived": int(self.stats["cmd_received"]),
+            "statsOdomReceived": int(self.stats["odom_received"]),
+            "statsEvaluations": int(self.stats["evaluations"]),
+        }
         
     # ============================================================
     # Evaluation
