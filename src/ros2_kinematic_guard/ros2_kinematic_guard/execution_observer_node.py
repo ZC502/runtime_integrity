@@ -514,27 +514,27 @@ class ExecutionObserverNode(Node):
         return history[0], history[-1]
 
     def _stale_data_payload_if_needed(self, now: float) -> Optional[Dict[str, Any]]:
-    cmd_age = None
-    odom_age = None
+        cmd_age = None
+        odom_age = None
 
-    if self.last_cmd_receive_time is not None:
-        cmd_age = now - self.last_cmd_receive_time
+        if self.last_cmd_receive_time is not None:
+            cmd_age = now - self.last_cmd_receive_time
 
-    if self.last_odom_receive_time is not None:
-        odom_age = now - self.last_odom_receive_time
+        if self.last_odom_receive_time is not None:
+            odom_age = now - self.last_odom_receive_time
 
-    missing = []
-    stale = []
+        missing = []
+        stale = []
 
-    if self.last_cmd_receive_time is None:
-        missing.append("cmd")
-    elif cmd_age is not None and cmd_age >= self.data_stale_warn_sec:
-        stale.append("cmd")
+        if self.last_cmd_receive_time is None:
+            missing.append("cmd")
+        elif cmd_age is not None and cmd_age >= self.data_stale_warn_sec:
+            stale.append("cmd")
 
-    if self.last_odom_receive_time is None:
-        missing.append("odom")
-    elif odom_age is not None and odom_age >= self.data_stale_warn_sec:
-        stale.append("odom")
+        if self.last_odom_receive_time is None:
+            missing.append("odom")
+        elif odom_age is not None and odom_age >= self.data_stale_warn_sec:
+            stale.append("odom")
 
     if not missing and not stale:
         return None
