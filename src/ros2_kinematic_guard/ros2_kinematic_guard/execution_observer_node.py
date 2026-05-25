@@ -151,6 +151,9 @@ class ExecutionObserverNode(Node):
         # observe-only by design
         self.declare_parameter("mode", "observe")
 
+        self.declare_parameter("data_stale_warn_sec", 1.0)
+        self.declare_parameter("data_stale_error_sec", 3.0)
+        
         # --------------------------------------------------------
         # Diagnostics identity
         # --------------------------------------------------------
@@ -286,6 +289,9 @@ class ExecutionObserverNode(Node):
 
         self.core = NarhLiteCore(cfg)
 
+        self.data_stale_warn_sec = float(self.get_parameter("data_stale_warn_sec").value)
+        self.data_stale_error_sec = float(self.get_parameter("data_stale_error_sec").value)
+        
         # --------------------------------------------------------
         # Runtime buffers
         # --------------------------------------------------------
@@ -507,12 +513,99 @@ class ExecutionObserverNode(Node):
             return None
         return history[0], history[-1]
 
+    def _stale_data_payload_if_needed(self, now: float) -> Optional[Dict[str, Any]]:
+    cmd_age = None
+    odom_age = None
+
+    if self.last_cmd_receive_time is not None:
+        cmd_age = now - self.last_cmd_receive_time
+
+    if self.last_odom_receive_time is not None:
+        odom_age = now - self.last_odom_receive_time
+
+    missing = []
+    stale = []
+
+    if self.last_cmd_receive_time is None:
+        missing.append("cmd")
+    elif cmd_age is not None and cmd_age >= self.data_stale_warn_sec:
+        stale.append("cmd")
+
+    if self.last_odom_receive_time is None:
+        missing.append("odom")
+    elif odom_age is not None and odom_age >= self.data_stale_warn_sec:
+        stale.append("odom")
+
+    if not missing and not stale:
+        return None
+
+    max_age = max(
+        cmd_age if cmd_age is not None else 0.0,
+        odom_age if odom_age is not None else 0.0,
+    )
+
+    if missing:
+        status = "WAITING_FOR_DATA"
+        cause = "MISSING_STREAM"
+        level_error = False
+    elif max_age >= self.data_stale_error_sec:
+        status = "STALE_DATA_TIMEOUT"
+        cause = "STALE_DATA"
+        level_error = True
+    else:
+        status = "STALE_DATA"
+        cause = "STALE_DATA"
+        level_error = False
+
+    return {
+        "timestamp": now,
+        "status": status,
+        "engineStatusRaw": status,
+        "dominantCause": cause,
+        "totalResidual": 0.0,
+        "r_nar": 0.0,
+        "causalAlignment": "UNKNOWN",
+        "mode": "observe",
+        "operatorAttentionRequired": level_error,
+
+        "wheelSlipIndex": 0.0,
+        "localizationJumpMetric": 0.0,
+        "cmdOdomResidual": 0.0,
+        "timeflowResidual": 0.0,
+        "phaseResidual": 0.0,
+        "staleCommandScore": 0.0,
+        "cmdAccelResidual": 0.0,
+        "cmdJerkResidual": 0.0,
+        "cmdArrivalJitterMs": self.cmd_arrival_jitter_ms,
+        "odomArrivalJitterMs": self.odom_arrival_jitter_ms,
+
+        "cmdAgeSec": -1.0 if cmd_age is None else cmd_age,
+        "odomAgeSec": -1.0 if odom_age is None else odom_age,
+
+        "cmdTopic": self.cmd_input_topic,
+        "odomTopic": self.odom_topic,
+        "lookbackWindowMs": self.lookback_window_ms,
+
+        "cmdBufferSize": len(self.cmd_history),
+        "odomBufferSize": len(self.odom_history),
+
+        "statsCmdReceived": int(self.stats["cmd_received"]),
+        "statsOdomReceived": int(self.stats["odom_received"]),
+        "statsEvaluations": int(self.stats["evaluations"]),
+    }
+        
     # ============================================================
     # Evaluation
     # ============================================================
 
     def _evaluation_tick(self) -> None:
         now = self._now_sec()
+
+        stale_payload = self._stale_data_payload_if_needed(now)
+        if stale_payload is not None:
+            self.last_payload = stale_payload
+            return
+
         self._prune_history(now)
 
         cmd_pair = self._get_window_pair(self.cmd_history)
@@ -526,13 +619,20 @@ class ExecutionObserverNode(Node):
         cmd_prev_buf, cmd_curr_buf = cmd_pair
         odom_prev_buf, odom_curr_buf = odom_pair
 
-        result = self.core.evaluate(
-            cmd_prev=cmd_prev_buf.cmd,
-            cmd_curr=cmd_curr_buf.cmd,
-            odom_prev=odom_prev_buf.odom,
-            odom_curr=odom_curr_buf.odom,
-            now=now,
-        )
+        try:
+            result = self.core.evaluate(
+                cmd_prev=cmd_prev_buf.cmd,
+                cmd_curr=cmd_curr_buf.cmd,
+                odom_prev=odom_prev_buf.odom,
+                odom_curr=odom_curr_buf.odom,
+                now=now,
+            )
+        except Exception as exc:
+            self.get_logger().error(
+                f"NARH evaluation failed, publishing EVALUATION_ERROR diagnostic: {exc}"
+            )
+            self.last_payload = self._evaluation_error_payload(now, exc)
+            return
 
         self.stats["evaluations"] += 1
 
@@ -556,7 +656,48 @@ class ExecutionObserverNode(Node):
             expected_dist=expected_dist,
             measured_dist=measured_dist,
             measured_yaw=measured_yaw,
+            engine_status_raw = enum_value(result.status)
+            action_hint = enum_value(result.action)
+            status = self._observer_status(result.status)
         )
+
+    def _evaluation_error_payload(self, now: float, exc: Exception) -> Dict[str, Any]:
+        return {
+            "timestamp": now,
+            "status": "EVALUATION_ERROR",
+            "engineStatusRaw": "EVALUATION_ERROR",
+            "dominantCause": "EVALUATION_EXCEPTION",
+            "totalResidual": 0.0,
+            "r_nar": 0.0,
+            "causalAlignment": "UNKNOWN",
+            "mode": "observe",
+            "operatorAttentionRequired": True,
+
+            "wheelSlipIndex": 0.0,
+            "localizationJumpMetric": 0.0,
+            "cmdOdomResidual": 0.0,
+            "timeflowResidual": 0.0,
+            "phaseResidual": 0.0,
+            "staleCommandScore": 0.0,
+            "cmdAccelResidual": 0.0,
+            "cmdJerkResidual": 0.0,
+            "cmdArrivalJitterMs": self.cmd_arrival_jitter_ms,
+            "odomArrivalJitterMs": self.odom_arrival_jitter_ms,
+
+            "cmdTopic": self.cmd_input_topic,
+            "odomTopic": self.odom_topic,
+            "lookbackWindowMs": self.lookback_window_ms,
+
+            "cmdBufferSize": len(self.cmd_history),
+            "odomBufferSize": len(self.odom_history),
+
+            "exceptionType": type(exc).__name__,
+            "exceptionMessage": str(exc),
+
+            "statsCmdReceived": int(self.stats["cmd_received"]),
+            "statsOdomReceived": int(self.stats["odom_received"]),
+            "statsEvaluations": int(self.stats["evaluations"]),
+        }
 
     # ============================================================
     # Cause classification and derived metrics
@@ -739,6 +880,8 @@ class ExecutionObserverNode(Node):
         expected_dist: float,
         measured_dist: float,
         measured_yaw: float,
+        "engineStatusRaw": engine_status_raw,
+        "actionHint": action_hint,
     ) -> Dict[str, Any]:
         status = self._observer_status(result.status)
         causal_alignment = self._causal_alignment(status)
@@ -873,6 +1016,13 @@ class ExecutionObserverNode(Node):
             key_value("statsCmdReceived", payload.get("statsCmdReceived", 0)),
             key_value("statsOdomReceived", payload.get("statsOdomReceived", 0)),
             key_value("statsEvaluations", payload.get("statsEvaluations", 0)),
+
+            key_value("engineStatusRaw", payload.get("engineStatusRaw", payload.get("status", ""))),
+            key_value("actionHint", payload.get("actionHint", "")),
+            key_value("cmdAgeSec", f"{finite_or(payload.get('cmdAgeSec', 0.0)):.3f}"),
+            key_value("odomAgeSec", f"{finite_or(payload.get('odomAgeSec', 0.0)):.3f}"),
+            key_value("exceptionType", payload.get("exceptionType", "")),
+            key_value("exceptionMessage", payload.get("exceptionMessage", "")),
         ]
 
         reasons = payload.get("reasons", [])
