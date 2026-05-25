@@ -144,46 +144,59 @@ Note: for unstamped `/cmd_vel`, timing metrics are based on observed message arr
 
 ---
 
-### Quick Start: Observe Your Own Robot or Simulation
+## Quick Start: Observe Your Own Robot
 
-Launch your existing robot, simulation, Nav2 stack, learned planner, or teleoperation node as usual.
+> Current ROS package name: `ros2_kinematic_guard`  
+> Runtime concept name: `runtime_integrity`
 
-Then run `runtime_integrity` in passive observe mode:
+### 1. Build the package
+
+From the workspace root:
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-select ros2_kinematic_guard
+source install/setup.bash
+```
+For every new terminal:
 ```Bash
-ros2 run runtime_integrity execution_observer_node --ros-args \
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+```
+### 2. Launch the observer
+```Bash
+ros2 run ros2_kinematic_guard execution_observer_node --ros-args \
   -p cmd_input_topic:=/cmd_vel \
   -p odom_topic:=/odom \
   -p mode:=observe
 ```
 For fused odometry:
 ```Bash
-ros2 run runtime_integrity execution_observer_node --ros-args \
+ros2 run ros2_kinematic_guard execution_observer_node --ros-args \
   -p cmd_input_topic:=/cmd_vel \
   -p odom_topic:=/odometry/filtered \
   -p mode:=observe
 ```
 Or:
 ```Bash
-ros2 run runtime_integrity execution_observer_node --ros-args \
+ros2 run ros2_kinematic_guard execution_observer_node --ros-args \
   -p cmd_input_topic:=/cmd_vel \
   -p odom_topic:=/fusion/odom \
   -p mode:=observe
 ```
-Then inspect standard ROS diagnostics:
+### 3. Inspect standard ROS diagnostics
 ```Bash
 ros2 topic echo /diagnostics
 ```
-Or use:
-
-- Foxglove Studio
-- `rqt_robot_monitor`
-- `diagnostic_aggregator`
-- any tool that consumes `/diagnostics`
-
 Look for:
 ```
 runtime_integrity/execution_integrity
 ```
+Recommended visualization tools:
+- Foxglove Studio
+- `rqt_robot_monitor`
+- `diagnostic_aggregator`
+- any tool that consumes `/diagnostics`
 
 ---
 
