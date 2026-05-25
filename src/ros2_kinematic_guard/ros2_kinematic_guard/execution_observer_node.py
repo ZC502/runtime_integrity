@@ -656,9 +656,6 @@ class ExecutionObserverNode(Node):
             expected_dist=expected_dist,
             measured_dist=measured_dist,
             measured_yaw=measured_yaw,
-            engine_status_raw = enum_value(result.status)
-            action_hint = enum_value(result.action)
-            status = self._observer_status(result.status)
         )
 
     def _evaluation_error_payload(self, now: float, exc: Exception) -> Dict[str, Any]:
@@ -880,11 +877,12 @@ class ExecutionObserverNode(Node):
         expected_dist: float,
         measured_dist: float,
         measured_yaw: float,
-        "engineStatusRaw": engine_status_raw,
-        "actionHint": action_hint,
     ) -> Dict[str, Any]:
+        # Extract original state and behavior prompts inside the function
         status = self._observer_status(result.status)
         causal_alignment = self._causal_alignment(status)
+        engine_status_raw = enum_value(result.status)
+        action_hint = enum_value(getattr(result, "action", "NONE"))
 
         components = getattr(result, "components", {}) or {}
         debug = getattr(result, "debug", {}) or {}
@@ -914,6 +912,8 @@ class ExecutionObserverNode(Node):
         return {
             "timestamp": now,
             "status": status,
+            "engineStatusRaw": engine_status_raw,  # added
+            "actionHint": action_hint,            # added
             "dominantCause": dominant_cause,
             "totalResidual": total_residual,
             "r_nar": total_residual,
