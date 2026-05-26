@@ -50,8 +50,6 @@ try:
         NarhLiteConfig,
         KinematicCommand,
         KinematicFeedback,
-        GuardStatus,
-        GuardAction,
     )
 except ImportError:
     from narh_lite_core import (
@@ -59,8 +57,6 @@ except ImportError:
         NarhLiteConfig,
         KinematicCommand,
         KinematicFeedback,
-        GuardStatus,
-        GuardAction,
     )
 
 
@@ -151,9 +147,10 @@ class ExecutionObserverNode(Node):
         # observe-only by design
         self.declare_parameter("mode", "observe")
 
+        # Missing / stale stream handling
         self.declare_parameter("data_stale_warn_sec", 1.0)
         self.declare_parameter("data_stale_error_sec", 3.0)
-        
+
         # --------------------------------------------------------
         # Diagnostics identity
         # --------------------------------------------------------
@@ -243,6 +240,9 @@ class ExecutionObserverNode(Node):
         self.expected_cmd_period_ms = float(self.get_parameter("expected_cmd_period_ms").value)
         self.expected_odom_period_ms = float(self.get_parameter("expected_odom_period_ms").value)
 
+        self.data_stale_warn_sec = float(self.get_parameter("data_stale_warn_sec").value)
+        self.data_stale_error_sec = float(self.get_parameter("data_stale_error_sec").value)
+
         self.wheel_slip_expected_min_m = float(
             self.get_parameter("wheel_slip_expected_min_m").value
         )
@@ -289,9 +289,6 @@ class ExecutionObserverNode(Node):
 
         self.core = NarhLiteCore(cfg)
 
-        self.data_stale_warn_sec = float(self.get_parameter("data_stale_warn_sec").value)
-        self.data_stale_error_sec = float(self.get_parameter("data_stale_error_sec").value)
-        
         # --------------------------------------------------------
         # Runtime buffers
         # --------------------------------------------------------
@@ -299,6 +296,7 @@ class ExecutionObserverNode(Node):
         self.odom_history: Deque[BufferedOdom] = deque(maxlen=1024)
 
         self.cmd_seq = 0
+        self.node_start_time = self._now_sec()
 
         # Arrival jitter trackers
         self.last_cmd_receive_time: Optional[float] = None
@@ -308,9 +306,6 @@ class ExecutionObserverNode(Node):
         self.cmd_arrival_jitter_ms = 0.0
         self.odom_arrival_jitter_ms = 0.0
 
-        # Last diagnostic payload
-        self.last_payload: Dict[str, Any] = self._waiting_payload()
-
         self.stats = {
             "cmd_received": 0,
             "odom_received": 0,
@@ -318,6 +313,9 @@ class ExecutionObserverNode(Node):
             "waiting_count": 0,
             "diagnostics_published": 0,
         }
+
+        # Last diagnostic payload
+        self.last_payload: Dict[str, Any] = self._waiting_payload()
 
         # --------------------------------------------------------
         # ROS interfaces
@@ -513,6 +511,10 @@ class ExecutionObserverNode(Node):
             return None
         return history[0], history[-1]
 
+    # ============================================================
+    # Missing / stale data
+    # ============================================================
+
     def _stale_data_payload_if_needed(self, now: float) -> Optional[Dict[str, Any]]:
         cmd_age = None
         odom_age = None
@@ -539,15 +541,22 @@ class ExecutionObserverNode(Node):
         if not missing and not stale:
             return None
 
+        node_age = now - getattr(self, "node_start_time", now)
+
         max_age = max(
             cmd_age if cmd_age is not None else 0.0,
             odom_age if odom_age is not None else 0.0,
         )
 
         if missing:
-            status = "WAITING_FOR_DATA"
-            cause = "MISSING_STREAM"
-            level_error = False
+            if node_age >= self.data_stale_error_sec:
+                status = "MISSING_STREAM_TIMEOUT"
+                cause = "MISSING_STREAM"
+                level_error = True
+            else:
+                status = "WAITING_FOR_DATA"
+                cause = "MISSING_STREAM"
+                level_error = False
         elif max_age >= self.data_stale_error_sec:
             status = "STALE_DATA_TIMEOUT"
             cause = "STALE_DATA"
@@ -582,6 +591,9 @@ class ExecutionObserverNode(Node):
 
             "cmdAgeSec": -1.0 if cmd_age is None else cmd_age,
             "odomAgeSec": -1.0 if odom_age is None else odom_age,
+            "nodeAgeSec": node_age,
+            "missingStreams": ",".join(missing),
+            "staleStreams": ",".join(stale),
 
             "cmdTopic": self.cmd_input_topic,
             "odomTopic": self.odom_topic,
@@ -594,7 +606,7 @@ class ExecutionObserverNode(Node):
             "statsOdomReceived": int(self.stats["odom_received"]),
             "statsEvaluations": int(self.stats["evaluations"]),
         }
-        
+
     # ============================================================
     # Evaluation
     # ============================================================
@@ -664,6 +676,7 @@ class ExecutionObserverNode(Node):
             "timestamp": now,
             "status": "EVALUATION_ERROR",
             "engineStatusRaw": "EVALUATION_ERROR",
+            "actionHint": "NONE",
             "dominantCause": "EVALUATION_EXCEPTION",
             "totalResidual": 0.0,
             "r_nar": 0.0,
@@ -681,6 +694,12 @@ class ExecutionObserverNode(Node):
             "cmdJerkResidual": 0.0,
             "cmdArrivalJitterMs": self.cmd_arrival_jitter_ms,
             "odomArrivalJitterMs": self.odom_arrival_jitter_ms,
+
+            "cmdAgeSec": -1.0,
+            "odomAgeSec": -1.0,
+            "nodeAgeSec": now - getattr(self, "node_start_time", now),
+            "missingStreams": "",
+            "staleStreams": "",
 
             "cmdTopic": self.cmd_input_topic,
             "odomTopic": self.odom_topic,
@@ -847,6 +866,7 @@ class ExecutionObserverNode(Node):
             return DiagnosticStatus.WARN
 
         if status in {
+            "MISSING_STREAM_TIMEOUT",
             "STALE_DATA_TIMEOUT",
             "EVALUATION_ERROR",
             "RED_BRAKE",
@@ -857,8 +877,20 @@ class ExecutionObserverNode(Node):
 
         return DiagnosticStatus.ERROR
 
+    def _diagnostic_level_name(self, level: int) -> str:
+        if level == DiagnosticStatus.OK:
+            return "OK"
+        if level == DiagnosticStatus.WARN:
+            return "WARN"
+        if level == DiagnosticStatus.ERROR:
+            return "ERROR"
+        if level == DiagnosticStatus.STALE:
+            return "STALE"
+        return f"UNKNOWN_{int(level)}"
+
     def _waiting_payload(self) -> Dict[str, Any]:
         return {
+            "timestamp": self._now_sec(),
             "status": "WAITING_FOR_DATA",
             "engineStatusRaw": "WAITING_FOR_DATA",
             "actionHint": "NONE",
@@ -882,6 +914,9 @@ class ExecutionObserverNode(Node):
 
             "cmdAgeSec": -1.0,
             "odomAgeSec": -1.0,
+            "nodeAgeSec": self._now_sec() - getattr(self, "node_start_time", self._now_sec()),
+            "missingStreams": "",
+            "staleStreams": "",
 
             "cmdTopic": self.cmd_input_topic,
             "odomTopic": self.odom_topic,
@@ -889,8 +924,12 @@ class ExecutionObserverNode(Node):
 
             "cmdBufferSize": len(self.cmd_history),
             "odomBufferSize": len(self.odom_history),
+
+            "statsCmdReceived": int(self.stats["cmd_received"]) if hasattr(self, "stats") else 0,
+            "statsOdomReceived": int(self.stats["odom_received"]) if hasattr(self, "stats") else 0,
+            "statsEvaluations": int(self.stats["evaluations"]) if hasattr(self, "stats") else 0,
         }
-        
+
     def _build_payload(
         self,
         now: float,
@@ -900,7 +939,6 @@ class ExecutionObserverNode(Node):
         measured_dist: float,
         measured_yaw: float,
     ) -> Dict[str, Any]:
-        # Extract original state and behavior prompts inside the function
         status = self._observer_status(result.status)
         causal_alignment = self._causal_alignment(status)
         engine_status_raw = enum_value(result.status)
@@ -934,8 +972,8 @@ class ExecutionObserverNode(Node):
         return {
             "timestamp": now,
             "status": status,
-            "engineStatusRaw": engine_status_raw,  # added
-            "actionHint": action_hint,            # added
+            "engineStatusRaw": engine_status_raw,
+            "actionHint": action_hint,
             "dominantCause": dominant_cause,
             "totalResidual": total_residual,
             "r_nar": total_residual,
@@ -957,6 +995,12 @@ class ExecutionObserverNode(Node):
             "expectedDistanceM": finite_or(expected_dist),
             "measuredDistanceM": finite_or(measured_dist),
             "measuredYawRad": finite_or(measured_yaw),
+
+            "cmdAgeSec": -1.0 if self.last_cmd_receive_time is None else now - self.last_cmd_receive_time,
+            "odomAgeSec": -1.0 if self.last_odom_receive_time is None else now - self.last_odom_receive_time,
+            "nodeAgeSec": now - getattr(self, "node_start_time", now),
+            "missingStreams": "",
+            "staleStreams": "",
 
             "cmdTopic": self.cmd_input_topic,
             "odomTopic": self.odom_topic,
@@ -991,16 +1035,22 @@ class ExecutionObserverNode(Node):
         status = str(payload.get("status", "UNKNOWN"))
         cause = str(payload.get("dominantCause", "NONE"))
         level = self._diagnostic_level(status)
+        level_name = self._diagnostic_level_name(level)
 
-        st.level = level
+        st.level = int(level)
 
         if cause in {"NONE", ""}:
-            st.message = f"{status}: SYSTEM_ALIGNED"
+            st.message = f"{level_name} | {status}: SYSTEM_ALIGNED"
         else:
-            st.message = f"{status}: {cause}"
+            st.message = f"{level_name} | {status}: {cause}"
 
         st.values = [
+            key_value("diagnosticLevelInt", int(level)),
+            key_value("diagnosticLevelName", level_name),
+
             key_value("status", payload.get("status", "")),
+            key_value("engineStatusRaw", payload.get("engineStatusRaw", payload.get("status", ""))),
+            key_value("actionHint", payload.get("actionHint", "")),
             key_value("dominantCause", payload.get("dominantCause", "")),
             key_value("totalResidual", f"{finite_or(payload.get('totalResidual', 0.0)):.6f}"),
             key_value("causalAlignment", payload.get("causalAlignment", "")),
@@ -1028,6 +1078,12 @@ class ExecutionObserverNode(Node):
             key_value("measuredDistanceM", f"{finite_or(payload.get('measuredDistanceM', 0.0)):.6f}"),
             key_value("measuredYawRad", f"{finite_or(payload.get('measuredYawRad', 0.0)):.6f}"),
 
+            key_value("cmdAgeSec", f"{finite_or(payload.get('cmdAgeSec', 0.0)):.3f}"),
+            key_value("odomAgeSec", f"{finite_or(payload.get('odomAgeSec', 0.0)):.3f}"),
+            key_value("nodeAgeSec", f"{finite_or(payload.get('nodeAgeSec', 0.0)):.3f}"),
+            key_value("missingStreams", payload.get("missingStreams", "")),
+            key_value("staleStreams", payload.get("staleStreams", "")),
+
             key_value("cmdTopic", payload.get("cmdTopic", self.cmd_input_topic)),
             key_value("odomTopic", payload.get("odomTopic", self.odom_topic)),
             key_value("lookbackWindowMs", payload.get("lookbackWindowMs", self.lookback_window_ms)),
@@ -1039,10 +1095,6 @@ class ExecutionObserverNode(Node):
             key_value("statsOdomReceived", payload.get("statsOdomReceived", 0)),
             key_value("statsEvaluations", payload.get("statsEvaluations", 0)),
 
-            key_value("engineStatusRaw", payload.get("engineStatusRaw", payload.get("status", ""))),
-            key_value("actionHint", payload.get("actionHint", "")),
-            key_value("cmdAgeSec", f"{finite_or(payload.get('cmdAgeSec', 0.0)):.3f}"),
-            key_value("odomAgeSec", f"{finite_or(payload.get('odomAgeSec', 0.0)):.3f}"),
             key_value("exceptionType", payload.get("exceptionType", "")),
             key_value("exceptionMessage", payload.get("exceptionMessage", "")),
         ]
