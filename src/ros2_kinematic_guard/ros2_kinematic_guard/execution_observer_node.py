@@ -116,6 +116,28 @@ DIAG_WARN = 1
 DIAG_ERROR = 2
 DIAG_STALE = 3
 
+
+def set_diagnostic_level(status_msg: DiagnosticStatus, level: int) -> None:
+    """
+    Set DiagnosticStatus.level in a ROS 2 distro-compatible way.
+
+    In ROS 2 Humble Python, DiagnosticStatus.level is generated as a byte field
+    and expects bytes([level]), not int(level).
+    """
+    level_int = int(level)
+
+    # Clamp to valid diagnostic range.
+    if level_int < 0:
+        level_int = 0
+    if level_int > 3:
+        level_int = 3
+
+    try:
+        status_msg.level = bytes([level_int])
+    except (AssertionError, TypeError):
+        # Some generated message variants may accept int.
+        status_msg.level = level_int
+
 # ============================================================
 # Buffers
 # ============================================================
@@ -1047,7 +1069,7 @@ class ExecutionObserverNode(Node):
         level = self._diagnostic_level(status)
         level_name = self._diagnostic_level_name(level)
 
-        st.level = int(level)
+        set_diagnostic_level(st, level)
 
         if cause in {"NONE", ""}:
             st.message = f"{level_name} | {status}: SYSTEM_ALIGNED"
