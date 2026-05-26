@@ -44,6 +44,8 @@ timeflowResidual: high
 
 **It is a passive runtime observer that turns command-to-physical execution consistency into a standard ROS diagnostic signal.**
 
+One interesting edge case is localization jump detection. In real robots, EKF/SLAM pipelines may smooth sudden pose corrections over several frames, so the same physical issue may appear either as a hard **LOCALIZATION_JUMP** or as a sustained command/odom inconsistency. The observer exposes both the public diagnosis and the underlying residual metrics, so developers can see whether the failure was a hard pose discontinuity or a smoothed tracking inconsistency.
+
 The current v0.3-alpha focus is strictly observational:
 ```
 No command interception.
@@ -247,6 +249,41 @@ docs/synthetic_testing.md
 Synthetic tests are provided only as reproducible development tools.
 
 The primary purpose of `runtime_integrity` is to observe real command-to-physical execution consistency in live robots, real simulations, or recorded operational data.
+
+---
+
+## Notes on Localization Jump Detection
+
+`runtime_integrity` detects localization jumps by checking whether the observed pose change is physically plausible under the recent command window.
+
+A hard pose discontinuity can produce a clear diagnostic event:
+
+```yaml
+message: "ERROR | RESYNCING: LOCALIZATION_JUMP"
+dominantCause: "LOCALIZATION_JUMP"
+totalResidual: "50.757462"
+localizationJumpMetric: "1.349308"
+cmdOdomResidual: "42.897885"
+staleStreams: ""
+```
+However, real localization pipelines often do not expose pose correction as a perfect step function.
+
+If the upstream EKF, SLAM backend, or sensor-fusion stack smooths a 2-meter correction over multiple frames, the same physical issue may appear as:
+```
+CMD_ODOM_MISMATCH
+TIMING
+sustained residual growth
+```
+rather than a single-frame `LOCALIZATION_JUMP`.
+
+For reliable localization-jump testing, use one of the following:
+- raw or minimally filtered pose output
+- bag replay with known pose discontinuities
+- simulator fault injection
+- a controlled synthetic jump publisher
+- a longer `lookback_window_ms` when observing heavily smoothed localization outputs
+
+For unstamped `/cmd_vel`, timing alignment is based on message arrival time. For stricter command/pose causality analysis, a stamped command interface such as TwistStamped is recommended.
 
 ---
 
