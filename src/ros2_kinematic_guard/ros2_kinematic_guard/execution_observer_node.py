@@ -976,15 +976,15 @@ class ExecutionObserverNode(Node):
         engine_status_raw = enum_value(result.status)
         action_hint = enum_value(getattr(result, "action", "NONE"))
 
-    # Preserve the raw classifier output, but do not expose a failure cause
-    # when the observer state is still GREEN / OK.
-    dominant_cause_candidate = str(dominant_cause)
+        # Preserve the raw classifier output, but do not expose a failure cause
+        # when the observer state is still GREEN / OK.
+        dominant_cause_candidate = str(dominant_cause)
 
-    if status in {"GREEN", "RECOVERED"}:
-        public_dominant_cause = "NONE"
-    else:
-        public_dominant_cause = dominant_cause_candidate
-        
+        if status in {"GREEN", "RECOVERED"}:
+            public_dominant_cause = "NONE"
+        else:
+            public_dominant_cause = dominant_cause_candidate
+
         components = getattr(result, "components", {}) or {}
         debug = getattr(result, "debug", {}) or {}
 
@@ -1015,8 +1015,13 @@ class ExecutionObserverNode(Node):
             "status": status,
             "engineStatusRaw": engine_status_raw,
             "actionHint": action_hint,
+
+            # Public cause shown in /diagnostics
             "dominantCause": public_dominant_cause,
+
+            # Raw classifier candidate retained for debugging / future WARN logic
             "dominantCauseCandidate": dominant_cause_candidate,
+
             "totalResidual": total_residual,
             "r_nar": total_residual,
             "causalAlignment": causal_alignment,
@@ -1038,8 +1043,16 @@ class ExecutionObserverNode(Node):
             "measuredDistanceM": finite_or(measured_dist),
             "measuredYawRad": finite_or(measured_yaw),
 
-            "cmdAgeSec": -1.0 if self.last_cmd_receive_time is None else now - self.last_cmd_receive_time,
-            "odomAgeSec": -1.0 if self.last_odom_receive_time is None else now - self.last_odom_receive_time,
+            "cmdAgeSec": (
+                -1.0
+                if self.last_cmd_receive_time is None
+                else now - self.last_cmd_receive_time
+            ),
+            "odomAgeSec": (
+                -1.0
+                if self.last_odom_receive_time is None
+                else now - self.last_odom_receive_time
+            ),
             "nodeAgeSec": now - getattr(self, "node_start_time", now),
             "missingStreams": "",
             "staleStreams": "",
