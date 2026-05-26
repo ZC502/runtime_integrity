@@ -92,11 +92,13 @@ with the diagnostic name:
 runtime_integrity/execution_integrity
 ```
 
-Diagnostic Levels
-Runtime condition	Diagnostic level	Meaning
-Command and odometry are aligned	OK / Level 0	Physical execution matches command intent
-Mild residual or timing disturbance	WARN / Level 1	Execution integrity is degraded
-Severe execution collapse	ERROR / Level 2	Command and physical feedback are no longer consistent
+### Diagnostic Levels
+
+| Runtime condition | Diagnostic level | Meaning |
+|---|---:|---|
+| Command and odometry are aligned | `OK` / Level 0 | Physical execution matches command intent |
+| Mild residual or timing disturbance | `WARN` / Level 1 | Execution integrity is degraded |
+| Severe execution collapse | `ERROR` / Level 2 | Command and physical feedback are no longer consistent |
 
 ---
 
@@ -151,7 +153,7 @@ Note: for unstamped `/cmd_vel`, timing metrics are based on observed message arr
 
 ### 1. Build the package
 
-From the workspace root:
+From the ROS 2 workspace root, the directory that contains `src/`:
 
 ```bash
 source /opt/ros/humble/setup.bash
