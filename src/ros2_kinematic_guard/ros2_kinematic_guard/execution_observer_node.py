@@ -976,6 +976,15 @@ class ExecutionObserverNode(Node):
         engine_status_raw = enum_value(result.status)
         action_hint = enum_value(getattr(result, "action", "NONE"))
 
+    # Preserve the raw classifier output, but do not expose a failure cause
+    # when the observer state is still GREEN / OK.
+    dominant_cause_candidate = str(dominant_cause)
+
+    if status in {"GREEN", "RECOVERED"}:
+        public_dominant_cause = "NONE"
+    else:
+        public_dominant_cause = dominant_cause_candidate
+        
         components = getattr(result, "components", {}) or {}
         debug = getattr(result, "debug", {}) or {}
 
@@ -1006,7 +1015,8 @@ class ExecutionObserverNode(Node):
             "status": status,
             "engineStatusRaw": engine_status_raw,
             "actionHint": action_hint,
-            "dominantCause": dominant_cause,
+            "dominantCause": public_dominant_cause,
+            "dominantCauseCandidate": dominant_cause_candidate,
             "totalResidual": total_residual,
             "r_nar": total_residual,
             "causalAlignment": causal_alignment,
@@ -1084,6 +1094,7 @@ class ExecutionObserverNode(Node):
             key_value("engineStatusRaw", payload.get("engineStatusRaw", payload.get("status", ""))),
             key_value("actionHint", payload.get("actionHint", "")),
             key_value("dominantCause", payload.get("dominantCause", "")),
+            key_value("dominantCauseCandidate", payload.get("dominantCauseCandidate", "")),
             key_value("totalResidual", f"{finite_or(payload.get('totalResidual', 0.0)):.6f}"),
             key_value("causalAlignment", payload.get("causalAlignment", "")),
             key_value("mode", payload.get("mode", "observe")),
