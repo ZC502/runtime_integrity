@@ -187,6 +187,8 @@ ros2 run ros2_kinematic_guard execution_observer_node --ros-args \
   -p mode:=observe
 ```
 ### 3. Inspect standard ROS diagnostics
+
+Note: `DiagnosticStatus.level` is a byte field. Some terminals may display WARN as `"\x01"` and ERROR as `"\x02"`. For readability, `runtime_integrity` also publishes `diagnosticLevelInt` and `diagnosticLevelName` in the diagnostic key-value list.
 ```Bash
 ros2 topic echo /diagnostics
 ```
