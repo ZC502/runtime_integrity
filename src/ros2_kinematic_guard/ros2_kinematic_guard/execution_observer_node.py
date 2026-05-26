@@ -561,6 +561,7 @@ class ExecutionObserverNode(Node):
             "timestamp": now,
             "status": status,
             "engineStatusRaw": status,
+            "actionHint": "NONE",
             "dominantCause": cause,
             "totalResidual": 0.0,
             "r_nar": 0.0,
@@ -836,22 +837,38 @@ class ExecutionObserverNode(Node):
         if status in {"GREEN", "RECOVERED"}:
             return DiagnosticStatus.OK
 
-        if status in {"YELLOW_SLOWDOWN", "DEGRADED"}:
+        if status in {
+            "YELLOW_SLOWDOWN",
+            "DEGRADED",
+            "WAITING_FOR_DATA",
+            "STALE_DATA",
+            "UNKNOWN",
+        }:
             return DiagnosticStatus.WARN
 
-        if status in {"WAITING_FOR_DATA", "UNKNOWN"}:
-            return DiagnosticStatus.WARN
+        if status in {
+            "STALE_DATA_TIMEOUT",
+            "EVALUATION_ERROR",
+            "RED_BRAKE",
+            "RESYNCING",
+            "BROKEN",
+        }:
+            return DiagnosticStatus.ERROR
 
         return DiagnosticStatus.ERROR
 
     def _waiting_payload(self) -> Dict[str, Any]:
         return {
             "status": "WAITING_FOR_DATA",
+            "engineStatusRaw": "WAITING_FOR_DATA",
+            "actionHint": "NONE",
             "dominantCause": "WAITING_FOR_DATA",
             "totalResidual": 0.0,
+            "r_nar": 0.0,
             "causalAlignment": "UNKNOWN",
             "mode": "observe",
             "operatorAttentionRequired": False,
+
             "wheelSlipIndex": 0.0,
             "localizationJumpMetric": 0.0,
             "cmdOdomResidual": 0.0,
@@ -862,13 +879,18 @@ class ExecutionObserverNode(Node):
             "cmdJerkResidual": 0.0,
             "cmdArrivalJitterMs": self.cmd_arrival_jitter_ms,
             "odomArrivalJitterMs": self.odom_arrival_jitter_ms,
+
+            "cmdAgeSec": -1.0,
+            "odomAgeSec": -1.0,
+
             "cmdTopic": self.cmd_input_topic,
             "odomTopic": self.odom_topic,
             "lookbackWindowMs": self.lookback_window_ms,
+
             "cmdBufferSize": len(self.cmd_history),
             "odomBufferSize": len(self.odom_history),
         }
-
+        
     def _build_payload(
         self,
         now: float,
