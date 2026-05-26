@@ -108,6 +108,13 @@ def enum_value(x: Any) -> str:
 def key_value(key: str, value: Any) -> KeyValue:
     return KeyValue(key=str(key), value=str(value))
 
+# ROS diagnostic numeric levels.
+# Do not rely on DiagnosticStatus.OK/WARN/ERROR constants here because
+# in some ROS 2 Python message generations they may be bytes like b"\x01".
+DIAG_OK = 0
+DIAG_WARN = 1
+DIAG_ERROR = 2
+DIAG_STALE = 3
 
 # ============================================================
 # Buffers
@@ -854,7 +861,7 @@ class ExecutionObserverNode(Node):
 
     def _diagnostic_level(self, status: str) -> int:
         if status in {"GREEN", "RECOVERED"}:
-            return DiagnosticStatus.OK
+            return DIAG_OK
 
         if status in {
             "YELLOW_SLOWDOWN",
@@ -863,7 +870,7 @@ class ExecutionObserverNode(Node):
             "STALE_DATA",
             "UNKNOWN",
         }:
-            return DiagnosticStatus.WARN
+            return DIAG_WARN
 
         if status in {
             "MISSING_STREAM_TIMEOUT",
@@ -873,20 +880,23 @@ class ExecutionObserverNode(Node):
             "RESYNCING",
             "BROKEN",
         }:
-            return DiagnosticStatus.ERROR
+            return DIAG_ERROR
 
-        return DiagnosticStatus.ERROR
+        return DIAG_ERROR
 
     def _diagnostic_level_name(self, level: int) -> str:
-        if level == DiagnosticStatus.OK:
+        level = int(level)
+
+        if level == DIAG_OK:
             return "OK"
-        if level == DiagnosticStatus.WARN:
+        if level == DIAG_WARN:
             return "WARN"
-        if level == DiagnosticStatus.ERROR:
+        if level == DIAG_ERROR:
             return "ERROR"
-        if level == DiagnosticStatus.STALE:
+        if level == DIAG_STALE:
             return "STALE"
-        return f"UNKNOWN_{int(level)}"
+
+        return f"UNKNOWN_{level}"
 
     def _waiting_payload(self) -> Dict[str, Any]:
         return {
@@ -979,7 +989,7 @@ class ExecutionObserverNode(Node):
             "r_nar": total_residual,
             "causalAlignment": causal_alignment,
             "mode": "observe",
-            "operatorAttentionRequired": diagnostic_level == DiagnosticStatus.ERROR,
+            "operatorAttentionRequired": diagnostic_level == DIAG_ERROR,
 
             "wheelSlipIndex": wheel_slip_index,
             "localizationJumpMetric": localization_jump_metric,
