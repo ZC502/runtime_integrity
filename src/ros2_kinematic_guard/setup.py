@@ -28,6 +28,7 @@ setup(
             "mock_robot_simulator = ros2_kinematic_guard.mock_robot_simulator:main",
             "command_integrity_reporter_node = ros2_kinematic_guard.reporter_node:main",
             "execution_observer_node = ros2_kinematic_guard.execution_observer_node:main",
+            "diagnostics_to_csv_labeler = ros2_kinematic_guard.diagnostics_to_csv_labeler:main",
         ],
     },
 )
