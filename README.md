@@ -101,7 +101,7 @@ RL reward / cost shaping
 failure dataset construction
 post-deployment model analysis
 ```
-**Tip for Sim2Real Pipelines**: You don't need to run this live on the physical robot during deployment. Just dump your fleet's rosbags into a CI/CD pipeline, replay them with use_sim_time:=true, and let the labeler automatically scrape and aggregate failures from hundreds of hours of real-world data overnight.
+💡 **Data Architecture Tip**: You don't just have to run this manually. For large-scale fleet operations or continuous Sim2Real training, you can integrate this into your overnight data ingestion pipeline. Replay your fleet's raw rosbags with `use_sim_time:=true` in headless CI/CD nodes to automatically index, label, and harvest physical failures from hundreds of hours of operational data without human intervention.
 
 ## Observe-Only by Design
 
