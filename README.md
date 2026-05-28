@@ -1,8 +1,120 @@
-# runtime_integrity v0.3-alpha
+# runtime_integrity
+ **A ROS 2 Physical Execution Auditor and Lightweight Failure Labeler for Learned Autonomy.**
 
-### Turning command-to-physical execution consistency into a first-class ROS diagnostic signal.
+> Turn command-to-physical execution consistency into standard ROS diagnostics and machine-readable Sim2Real failure labels.
 
-`runtime_integrity` is a non-invasive, diagnostics-native execution observer for ROS 2 mobile robots. It monitors whether the robot’s physical motion remains consistent with the recent command stream over short runtime windows.
+## The Sim2Real Failure-Mining Bottleneck
+
+Learned local planners, reinforcement-learning navigation policies, and VLA-style robot policies can perform extremely well in simulation.
+
+But when deployed on physical robots, they often fail for physical reasons that are hard to mine from raw logs:
+
+```text
+wheel slip
+terrain friction changes
+command/feedback timing jitter
+localization jumps
+stale command streams
+odom discontinuities
+```
+
+For ML and robot-learning teams, the bottleneck is not only that these failures happen.
+
+The bottleneck is that they are rarely converted into clean, reusable failure labels.
+
+Typical field-data problem:
+
+| Bottleneck            | What happens in practice                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Data scale            | A long field run can produce tens of GB of rosbag data, while the useful failure event may last only a few seconds |
+| Labeling cost         | Physical failures such as slip are often assumed to require torque, tactile, wheel-deformation, or terrain sensors |
+| Extraction difficulty | Localization jumps and timing faults can require cross-checking odom, tf, lidar, IMU, and command streams manually |
+
+When a learned planner commands:
+
+```text
+go forward
+```
+
+there is often no explicit runtime label that says:
+
+```text
+the robot physically executed the command
+```
+
+or:
+
+```text
+the robot slipped, jumped, drifted, desynchronized, or stopped responding physically
+```
+
+`runtime_integrity` is built to expose that missing signal.
+
+## Automated Failure Mining from Command/Odom Consistency
+
+`runtime_integrity` observes the causal alignment between a robot’s command stream and physical feedback:
+
+```text
+/cmd_vel + /odom
+```
+
+It then publishes execution-integrity state through standard ROS diagnostics:
+
+```text
+/diagnostics
+  runtime_integrity/execution_integrity
+```
+
+The included CSV labeler converts those diagnostic events into machine-readable failure labels:
+
+```bash
+ros2 run ros2_kinematic_guard diagnostics_to_csv_labeler --ros-args \
+  -p output_csv:=runtime_integrity_failure_labels.csv
+```
+
+This means you can replay a failed robot run or rosbag, run the observer, and export timestamps and residual metrics for events such as:
+
+```text
+WHEEL_SLIP
+LOCALIZATION_JUMP
+CMD_ODOM_MISMATCH
+TIMING
+STALE_DATA
+MISSING_STREAM
+```
+
+Example CSV output:
+
+```csv
+ros_time_sec,diagnostic_level_name,status,dominantCause,totalResidual,cmdOdomResidual,wheelSlipIndex,localizationJumpMetric
+1779799999.12,ERROR,RESYNCING,WHEEL_SLIP,1.730000,1.462117,1.23,0.0
+1779800001.54,ERROR,RESYNCING,LOCALIZATION_JUMP,50.757462,42.897885,0.0,1.349308
+```
+
+These labels can be used for:
+
+```text
+Sim2Real debugging
+hard-negative mining
+OOD event detection
+RL reward / cost shaping
+failure dataset construction
+post-deployment model analysis
+```
+
+## Observe-Only by Design
+
+`runtime_integrity` v0.3-alpha does not modify robot control behavior.
+
+```text
+No command interception.
+No controller modification.
+No Nav2 BT modification.
+No base-driver modification.
+```
+
+It only observes command-to-physical execution consistency and exports the result through ROS-native diagnostics and CSV labels.
+
 
 `runtime_integrity` currently focuses on three execution-integrity failure classes:
 
